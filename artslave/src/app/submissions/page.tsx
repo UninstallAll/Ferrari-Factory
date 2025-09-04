@@ -70,13 +70,15 @@ export default function SubmissionsPage() {
       const response = await fetch('/api/submissions')
       const result = await response.json()
 
-      if (result.success) {
+      if (result.success && Array.isArray(result.data)) {
         setSubmissions(result.data)
       } else {
         console.error('获取投稿数据失败:', result.error)
+        setSubmissions([]) // 确保设置为空数组
       }
     } catch (error) {
       console.error('获取投稿数据失败:', error)
+      setSubmissions([]) // 确保设置为空数组
     } finally {
       setLoading(false)
     }
@@ -122,14 +124,14 @@ export default function SubmissionsPage() {
     })
   }
 
-  const filteredSubmissions = submissions.filter(submission => {
+  const filteredSubmissions = (submissions || []).filter(submission => {
     const matchesSearch = submission.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          submission.organizer.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         submission.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()))
-    
+                         (submission.tags || []).some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()))
+
     const matchesType = selectedType === 'all' || submission.type === selectedType
     const matchesCountry = selectedCountry === 'all' || submission.country === selectedCountry
-    
+
     return matchesSearch && matchesType && matchesCountry
   })
 
@@ -230,6 +232,7 @@ export default function SubmissionsPage() {
                   value={selectedType}
                   onChange={(e) => setSelectedType(e.target.value)}
                   className="w-full px-2 py-1.5 text-sm rounded-lg border-2 border-gray-200 bg-white hover:border-gray-300 focus:border-cyan-500 focus:outline-none transition-all duration-200"
+                  data-testid="type-filter"
                 >
                   <option value="all">所有类型</option>
                   <option value="EXHIBITION">艺术展览</option>

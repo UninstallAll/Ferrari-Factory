@@ -19,6 +19,7 @@ export default function SubmissionForm({ submission, onClose, onSave }: Submissi
   const { getThemeClasses } = useTheme()
   const themeClasses = getThemeClasses()
   const [loading, setLoading] = useState(false)
+  const [errors, setErrors] = useState<string[]>([])
   const [formData, setFormData] = useState({
     title: '',
     type: 'EXHIBITION' as 'EXHIBITION' | 'RESIDENCY' | 'COMPETITION' | 'GRANT' | 'CONFERENCE',
@@ -69,6 +70,25 @@ export default function SubmissionForm({ submission, onClose, onSave }: Submissi
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    // 验证必填字段
+    const validationErrors: string[] = []
+    if (!formData.title.trim()) {
+      validationErrors.push('请填写标题')
+    }
+    if (!formData.organizer.trim()) {
+      validationErrors.push('请填写主办方')
+    }
+    if (!formData.deadline) {
+      validationErrors.push('请选择截止日期')
+    }
+
+    if (validationErrors.length > 0) {
+      setErrors(validationErrors)
+      return
+    }
+
+    setErrors([])
     setLoading(true)
 
     try {
@@ -146,14 +166,26 @@ export default function SubmissionForm({ submission, onClose, onSave }: Submissi
         </CardHeader>
 
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSubmit} className="space-y-6" data-testid="submission-form">
+            {/* 错误信息显示 */}
+            {errors.length > 0 && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <div className="text-red-800 text-sm">
+                  {errors.map((error, index) => (
+                    <div key={index}>{error}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Basic Information */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className={`block text-sm font-medium ${themeClasses.textPrimary} mb-2`}>
+                <label htmlFor="title" className={`block text-sm font-medium ${themeClasses.textPrimary} mb-2`}>
                   标题 *
                 </label>
                 <Input
+                  id="title"
                   value={formData.title}
                   onChange={(e) => handleChange('title', e.target.value)}
                   className={`${themeClasses.input} ${themeClasses.inputFocus} rounded-2xl`}
@@ -163,10 +195,11 @@ export default function SubmissionForm({ submission, onClose, onSave }: Submissi
               </div>
 
               <div>
-                <label className={`block text-sm font-medium ${themeClasses.textPrimary} mb-2`}>
+                <label htmlFor="type" className={`block text-sm font-medium ${themeClasses.textPrimary} mb-2`}>
                   类型 *
                 </label>
                 <select
+                  id="type"
                   value={formData.type}
                   onChange={(e) => handleChange('type', e.target.value)}
                   className={`w-full ${themeClasses.input} ${themeClasses.inputFocus} rounded-2xl px-3 py-2`}
@@ -181,10 +214,11 @@ export default function SubmissionForm({ submission, onClose, onSave }: Submissi
               </div>
 
               <div>
-                <label className={`block text-sm font-medium ${themeClasses.textPrimary} mb-2`}>
+                <label htmlFor="organizer" className={`block text-sm font-medium ${themeClasses.textPrimary} mb-2`}>
                   主办方 *
                 </label>
                 <Input
+                  id="organizer"
                   value={formData.organizer}
                   onChange={(e) => handleChange('organizer', e.target.value)}
                   className={`${themeClasses.input} ${themeClasses.inputFocus} rounded-2xl`}
@@ -220,10 +254,11 @@ export default function SubmissionForm({ submission, onClose, onSave }: Submissi
               </div>
 
               <div>
-                <label className={`block text-sm font-medium ${themeClasses.textPrimary} mb-2`}>
+                <label htmlFor="deadline" className={`block text-sm font-medium ${themeClasses.textPrimary} mb-2`}>
                   截止日期 *
                 </label>
                 <Input
+                  id="deadline"
                   type="date"
                   value={formData.deadline}
                   onChange={(e) => handleChange('deadline', e.target.value)}

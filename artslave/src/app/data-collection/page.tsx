@@ -236,11 +236,30 @@ export default function DataCollectionPage() {
     try {
       const response = await fetch('/api/scheduler?action=status')
       const data = await response.json()
-      if (response.ok) {
+      if (response.ok && data.status) {
         setSchedulerStatus(data.status)
+      } else {
+        // 设置默认状态
+        setSchedulerStatus({
+          running: false,
+          startTime: null,
+          lastCheck: null,
+          error: null,
+          uptime: 0,
+          uptimeFormatted: '0秒'
+        })
       }
     } catch (error) {
       console.error('Failed to load scheduler status:', error)
+      // 设置默认状态
+      setSchedulerStatus({
+        running: false,
+        startTime: null,
+        lastCheck: null,
+        error: null,
+        uptime: 0,
+        uptimeFormatted: '0秒'
+      })
     }
   }
 
@@ -315,11 +334,36 @@ export default function DataCollectionPage() {
     try {
       const response = await fetch('/api/n8n?action=status')
       const data = await response.json()
-      if (response.ok) {
+      if (response.ok && data.status) {
         setN8nStatus(data.status)
+      } else {
+        // 设置默认状态
+        setN8nStatus({
+          running: false,
+          startTime: null,
+          port: 5678,
+          url: 'http://localhost:5678',
+          error: null,
+          pid: null,
+          uptime: 0,
+          uptimeFormatted: '0秒',
+          isInstalled: false
+        })
       }
     } catch (error) {
       console.error('Failed to load n8n status:', error)
+      // 设置默认状态
+      setN8nStatus({
+        running: false,
+        startTime: null,
+        port: 5678,
+        url: 'http://localhost:5678',
+        error: null,
+        pid: null,
+        uptime: 0,
+        uptimeFormatted: '0秒',
+        isInstalled: false
+      })
     }
   }
 
@@ -434,7 +478,7 @@ export default function DataCollectionPage() {
   }
 
   const handleOpenN8n = () => {
-    if (n8nStatus.running && n8nStatus.url) {
+    if (n8nStatus?.running && n8nStatus?.url) {
       window.open(n8nStatus.url, '_blank')
     }
   }
@@ -546,18 +590,18 @@ export default function DataCollectionPage() {
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-4">
                 <div className={`flex items-center space-x-2 px-3 py-1 rounded-full text-sm ${
-                  schedulerStatus.running
+                  schedulerStatus?.running
                     ? 'bg-green-100 text-green-800'
                     : 'bg-gray-100 text-gray-800'
-                }`}>
+                }`} data-testid="scheduler-status">
                   <div className={`w-2 h-2 rounded-full ${
-                    schedulerStatus.running ? 'bg-green-500' : 'bg-gray-500'
+                    schedulerStatus?.running ? 'bg-green-500' : 'bg-gray-500'
                   }`} />
-                  <span>{schedulerStatus.running ? '运行中' : '已停止'}</span>
+                  <span>{schedulerStatus?.running ? '运行中' : '已停止'}</span>
                 </div>
-                {schedulerStatus.running && (
+                {schedulerStatus?.running && (
                   <div className={`text-xs ${themeClasses.textSecondary}`}>
-                    运行时间: {schedulerStatus.uptimeFormatted}
+                    运行时间: {schedulerStatus?.uptimeFormatted || '0秒'}
                   </div>
                 )}
                 {schedulerStatus.error && (
@@ -619,21 +663,21 @@ export default function DataCollectionPage() {
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-4">
                 <div className={`flex items-center space-x-2 px-3 py-1 rounded-full text-sm ${
-                  n8nStatus.running
+                  n8nStatus?.running
                     ? 'bg-green-100 text-green-800'
                     : 'bg-gray-100 text-gray-800'
                 }`}>
                   <div className={`w-2 h-2 rounded-full ${
-                    n8nStatus.running ? 'bg-green-500' : 'bg-gray-500'
+                    n8nStatus?.running ? 'bg-green-500' : 'bg-gray-500'
                   }`} />
-                  <span>{n8nStatus.running ? '运行中' : '已停止'}</span>
+                  <span>{n8nStatus?.running ? '运行中' : '已停止'}</span>
                 </div>
-                {n8nStatus.running && (
+                {n8nStatus?.running && (
                   <div className={`text-xs ${themeClasses.textSecondary}`}>
-                    运行时间: {n8nStatus.uptimeFormatted} | 端口: {n8nStatus.port}
+                    运行时间: {n8nStatus?.uptimeFormatted || '0秒'} | 端口: {n8nStatus?.port || 5678}
                   </div>
                 )}
-                {!n8nStatus.isInstalled && (
+                {!n8nStatus?.isInstalled && (
                   <div className="text-xs text-orange-600 flex items-center space-x-2">
                     <span>建议手动启动 n8n</span>
                     <button
@@ -645,14 +689,14 @@ export default function DataCollectionPage() {
                     </button>
                   </div>
                 )}
-                {n8nStatus.error && (
+                {n8nStatus?.error && (
                   <div className="text-xs text-red-600">
                     错误: {n8nStatus.error}
                   </div>
                 )}
               </div>
               <div className="flex space-x-2">
-                {n8nStatus.running ? (
+                {n8nStatus?.running ? (
                   <>
                     <Button
                       size="sm"

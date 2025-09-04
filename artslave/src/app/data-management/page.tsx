@@ -100,7 +100,7 @@ export default function DataManagementPage() {
     try {
       const success = await db.deleteSubmission(id)
       if (success) {
-        setSubmissions(submissions.filter(s => s.id !== id))
+        setSubmissions((submissions || []).filter(s => s.id !== id))
       } else {
         alert('删除失败')
       }
@@ -113,12 +113,12 @@ export default function DataManagementPage() {
   const handleSaveSubmission = (savedSubmission: SubmissionData) => {
     if (editingSubmission) {
       // Update existing submission
-      setSubmissions(submissions.map(s =>
+      setSubmissions((submissions || []).map(s =>
         s.id === savedSubmission.id ? savedSubmission : s
       ))
     } else {
       // Add new submission
-      setSubmissions([savedSubmission, ...submissions])
+      setSubmissions([savedSubmission, ...(submissions || [])])
     }
     setEditingSubmission(null)
     setShowAddForm(false)
@@ -126,10 +126,10 @@ export default function DataManagementPage() {
 
   // Batch management functions
   const handleSelectAll = () => {
-    if (selectedItems.size === submissions.length) {
+    if (selectedItems.size === (submissions || []).length) {
       setSelectedItems(new Set())
     } else {
-      setSelectedItems(new Set(submissions.map(s => s.id)))
+      setSelectedItems(new Set((submissions || []).map(s => s.id)))
     }
   }
 
@@ -153,7 +153,7 @@ export default function DataManagementPage() {
       const deletePromises = Array.from(selectedItems).map(id => db.deleteSubmission(id))
       await Promise.all(deletePromises)
 
-      setSubmissions(submissions.filter(s => !selectedItems.has(s.id)))
+      setSubmissions((submissions || []).filter(s => !selectedItems.has(s.id)))
       setSelectedItems(new Set())
       alert(`成功删除 ${selectedItems.size} 条记录`)
     } catch (error) {
@@ -402,7 +402,7 @@ export default function DataManagementPage() {
               className={`${themeClasses.button} rounded-2xl`}
             >
               <Plus className="w-4 h-4 mr-2" />
-              添加投稿信息
+              添加投稿
             </Button>
             <Button
               variant="outline"
@@ -543,11 +543,11 @@ export default function DataManagementPage() {
           <div className="p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className={`text-lg font-semibold ${themeClasses.textPrimary}`}>
-                投稿信息列表 ({submissions.length} 条)
+                投稿信息列表 ({(submissions || []).length} 条)
               </h2>
               {showBatchActions && selectedItems.size > 0 && (
                 <div className={`text-sm ${themeClasses.textSecondary} bg-blue-50 px-3 py-1 rounded-full`}>
-                  已选择 {selectedItems.size} / {submissions.length} 条
+                  已选择 {selectedItems.size} / {(submissions || []).length} 条
                 </div>
               )}
             </div>
@@ -557,7 +557,7 @@ export default function DataManagementPage() {
                 <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-2 text-gray-400" />
                 <p className={themeClasses.textSecondary}>加载中...</p>
               </div>
-            ) : submissions.length === 0 ? (
+            ) : (submissions || []).length === 0 ? (
               <div className="text-center py-8">
                 <Database className="w-12 h-12 mx-auto mb-4 text-gray-400" />
                 <p className={themeClasses.textSecondary}>暂无数据</p>

@@ -27,9 +27,12 @@ const customJestConfig = {
       statements: 70
     }
   },
-  moduleNameMapping: {
+  moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
   },
+  transformIgnorePatterns: [
+    'node_modules/(?!(isows|@supabase|@anthropic-ai|ws)/)'
+  ],
   testTimeout: 10000,
   verbose: true
 }

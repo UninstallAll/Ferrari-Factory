@@ -64,6 +64,24 @@ export default function Home() {
         </header>
 
         <main className="max-w-6xl mx-auto px-6 py-8">
+          {/* 统计数据区域 */}
+          <div className={`mb-8 ${themeClasses.cardBackground} rounded-3xl p-6 shadow-sm border-2 ${themeClasses.border}`}>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="text-center">
+                <div className={`text-3xl font-bold ${themeClasses.textPrimary}`}>1</div>
+                <div className={`text-sm ${themeClasses.textSecondary}`}>活跃数据源</div>
+              </div>
+              <div className="text-center">
+                <div className={`text-3xl font-bold ${themeClasses.textPrimary}`}>0</div>
+                <div className={`text-sm ${themeClasses.textSecondary}`}>今日新增投稿</div>
+              </div>
+              <div className="text-center">
+                <div className={`text-3xl font-bold ${themeClasses.textPrimary}`}>0</div>
+                <div className={`text-sm ${themeClasses.textSecondary}`}>待处理任务</div>
+              </div>
+            </div>
+          </div>
+
           <div className={`mb-8 ${themeClasses.cardBackground} rounded-3xl p-8 shadow-sm border-2 ${themeClasses.border}`}>
             <div className="mb-6">
               <h2 className={`text-2xl font-bold text-amber-700 flex items-center mb-2`}>
@@ -107,7 +125,7 @@ export default function Home() {
                 className={`w-full ${themeClasses.button} rounded-2xl py-3 transition-all duration-200`}
                 onClick={() => window.location.href = '/data-management'}
               >
-                数据库管理
+                进入管理
               </Button>
             </div>
 
@@ -117,7 +135,7 @@ export default function Home() {
                 <div className="w-14 h-14 bg-cyan-600 rounded-2xl flex items-center justify-center mb-4">
                   <Database className="w-7 h-7 text-white" />
                 </div>
-                <h3 className={`text-xl font-bold ${themeClasses.textPrimary} mb-2`}>数据收集</h3>
+                <h3 className={`text-xl font-bold ${themeClasses.textPrimary} mb-2`}>数据收集管理</h3>
                 <p className={`${themeClasses.textSecondary} text-sm`}>
                   管理爬虫和数据源
                 </p>
@@ -126,7 +144,7 @@ export default function Home() {
                 className={`w-full ${themeClasses.button} rounded-2xl py-3 transition-all duration-200`}
                 onClick={() => window.location.href = '/data-collection'}
               >
-                数据收集
+                进入收集
               </Button>
             </div>
 
@@ -136,7 +154,7 @@ export default function Home() {
                 <div className="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center mb-4">
                   <FileText className="w-7 h-7 text-white" />
                 </div>
-                <h3 className={`text-xl font-bold ${themeClasses.textPrimary} mb-2`}>投稿信息</h3>
+                <h3 className={`text-xl font-bold ${themeClasses.textPrimary} mb-2`}>投稿信息展示</h3>
                 <p className={`${themeClasses.textSecondary} text-sm`}>
                   浏览和搜索最新的投稿机会
                 </p>
@@ -174,7 +192,7 @@ export default function Home() {
                 <div className="w-14 h-14 bg-green-600 rounded-2xl flex items-center justify-center mb-4">
                   <Brain className="w-7 h-7 text-white" />
                 </div>
-                <h3 className={`text-xl font-bold ${themeClasses.textPrimary} mb-2`}>AI 匹配</h3>
+                <h3 className={`text-xl font-bold ${themeClasses.textPrimary} mb-2`}>AI 智能匹配</h3>
                 <p className={`${themeClasses.textSecondary} text-sm`}>
                   查看为您推荐的投稿机会
                 </p>
@@ -328,7 +346,7 @@ export default function Home() {
               <div className="w-14 h-14 bg-cyan-600 rounded-2xl flex items-center justify-center mb-4">
                 <Database className="w-7 h-7 text-white" />
               </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">数据收集</h3>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">数据收集管理</h3>
               <p className="text-gray-600 text-sm">
                 管理爬虫和数据源
               </p>
@@ -347,7 +365,7 @@ export default function Home() {
               <div className="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center mb-4">
                 <FileText className="w-7 h-7 text-white" />
               </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">投稿信息</h3>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">投稿信息展示</h3>
               <p className="text-gray-600 text-sm">
                 浏览和搜索最新的投稿机会
               </p>
@@ -382,7 +400,7 @@ export default function Home() {
               <div className="w-14 h-14 bg-green-600 rounded-2xl flex items-center justify-center mb-4">
                 <Brain className="w-7 h-7 text-white" />
               </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">AI 匹配</h3>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">AI 智能匹配</h3>
               <p className="text-gray-600 text-sm">
                 查看为您推荐的投稿机会
               </p>

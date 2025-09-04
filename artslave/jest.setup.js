@@ -55,6 +55,35 @@ const sessionStorageMock = {
 }
 global.sessionStorage = sessionStorageMock
 
+// Mock environment variables
+process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://test.supabase.co'
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'test-anon-key'
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key'
+
+// Mock problematic ES modules
+jest.mock('isows', () => ({
+  WebSocket: class MockWebSocket {
+    constructor(url) {
+      this.url = url;
+      this.readyState = 1;
+    }
+    send() {}
+    close() {}
+  },
+  getNativeWebSocket: () => class MockWebSocket {}
+}));
+
+jest.mock('ws', () => {
+  return class MockWebSocket {
+    constructor(url) {
+      this.url = url;
+      this.readyState = 1;
+    }
+    send() {}
+    close() {}
+  };
+});
+
 // Suppress console warnings in tests
 const originalError = console.error
 beforeAll(() => {
