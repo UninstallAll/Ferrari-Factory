@@ -9,6 +9,7 @@ import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useTheme } from '@/contexts/ThemeContext'
 import ThemeSelector from '@/components/ThemeSelector'
+import ChatBox from '@/components/ChatBox'
 import {
   FileText,
   Brain,
@@ -64,6 +65,11 @@ export default function Home() {
         </header>
 
         <main className="max-w-6xl mx-auto px-6 py-8">
+          {/* AI 对话测试窗口 */}
+          <div className="mb-8">
+            <ChatBox />
+          </div>
+
           {/* 统计数据区域 */}
           <div className={`mb-8 ${themeClasses.cardBackground} rounded-3xl p-6 shadow-sm border-2 ${themeClasses.border}`}>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -93,7 +99,7 @@ export default function Home() {
               </p>
             </div>
             <div className="space-y-6">
-              <p className="text-gray-700">
+              <p className={themeClasses.textSecondary}>
                 要启用完整功能，请配置以下环境变量：
               </p>
               <div className="bg-gray-900 p-6 rounded-2xl font-mono text-sm text-green-400 border-2 border-black">
@@ -241,13 +247,13 @@ export default function Home() {
             </div>
 
             {/* 7. 投稿记录 */}
-            <div className="group bg-white rounded-3xl p-6 shadow-sm hover:shadow-md transition-all duration-300 border-2 border-black">
+            <div className={`group ${themeClasses.cardBackground} rounded-3xl p-6 shadow-sm hover:shadow-md transition-all duration-300 border-2 ${themeClasses.border}`}>
               <div className="mb-4">
                 <div className="w-14 h-14 bg-orange-600 rounded-2xl flex items-center justify-center mb-4">
                   <History className="w-7 h-7 text-white" />
                 </div>
-                <h3 className="text-xl font-bold text-gray-900 mb-2">投稿记录</h3>
-                <p className="text-gray-600 text-sm">
+                <h3 className={`text-xl font-bold ${themeClasses.textPrimary} mb-2`}>投稿记录</h3>
+                <p className={`${themeClasses.textSecondary} text-sm`}>
                   跟踪您的投稿状态
                 </p>
               </div>
@@ -257,13 +263,13 @@ export default function Home() {
             </div>
 
             {/* 8. 系统设置 */}
-            <div className="group bg-white rounded-3xl p-6 shadow-sm hover:shadow-md transition-all duration-300 border-2 border-black">
+            <div className={`group ${themeClasses.cardBackground} rounded-3xl p-6 shadow-sm hover:shadow-md transition-all duration-300 border-2 ${themeClasses.border}`}>
               <div className="mb-4">
                 <div className="w-14 h-14 bg-gray-700 rounded-2xl flex items-center justify-center mb-4">
                   <Settings className="w-7 h-7 text-white" />
                 </div>
-                <h3 className="text-xl font-bold text-gray-900 mb-2">设置</h3>
-                <p className="text-gray-600 text-sm">
+                <h3 className={`text-xl font-bold ${themeClasses.textPrimary} mb-2`}>设置</h3>
+                <p className={`${themeClasses.textSecondary} text-sm`}>
                   个人资料和系统设置
                 </p>
               </div>

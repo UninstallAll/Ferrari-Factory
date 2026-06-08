@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# fake-llm 本地假 API 的运行时临时文件
+/.fake-llm/
+
 # vercel
 .vercel
 

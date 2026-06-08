@@ -16,7 +16,11 @@
     "test:ci": "npm run test:coverage && npm run test:integration",
     "n8n:start": "node scripts/start-n8n.js",
     "n8n:dev": "N8N_LOG_LEVEL=debug node scripts/start-n8n.js",
-    "workflow:setup": "node scripts/setup-workflow.js"
+    "workflow:setup": "node scripts/setup-workflow.js",
+    "fake-llm": "node scripts/fake-llm.js serve",
+    "fake-llm:manual": "FAKE_LLM_MODE=manual node scripts/fake-llm.js serve",
+    "fake-llm:cli": "FAKE_LLM_MODE=cli node scripts/fake-llm.js serve",
+    "fake-llm:reply": "node scripts/fake-llm.js reply"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.60.0",

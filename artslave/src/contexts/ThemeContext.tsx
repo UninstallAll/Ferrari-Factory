@@ -33,28 +33,31 @@ export const useTheme = () => {
 
 const themeConfigs = {
   professional: {
-    background: 'bg-white',
+    // 浅灰背景让白色卡片浮起来，避免卡片与背景同色
+    background: 'bg-slate-100',
     cardBackground: 'bg-white',
-    textPrimary: 'text-gray-900',
-    textSecondary: 'text-gray-600',
-    border: 'border-gray-300',
-    accent: 'text-blue-700',
-    button: 'bg-white text-gray-900 border border-gray-300 hover:bg-gray-50',
-    buttonHover: 'hover:bg-gray-50',
-    input: 'bg-white border-gray-300',
+    textPrimary: 'text-slate-900',
+    textSecondary: 'text-slate-600',
+    border: 'border-slate-200',
+    accent: 'text-blue-600',
+    // 深色实心按钮，在白卡上对比清晰
+    button: 'bg-slate-900 text-white hover:bg-slate-700',
+    buttonHover: 'hover:bg-slate-100',
+    input: 'bg-white border-slate-300 text-slate-900 placeholder:text-slate-400',
     inputFocus: 'focus:border-blue-500'
   },
   dark: {
-    background: 'bg-gray-900',
-    cardBackground: 'bg-gray-800',
-    textPrimary: 'text-gray-100',
-    textSecondary: 'text-gray-300',
-    border: 'border-gray-600',
+    // 更深的背景 + 稍亮的卡片，层次分明
+    background: 'bg-slate-950',
+    cardBackground: 'bg-slate-800',
+    textPrimary: 'text-slate-50',
+    textSecondary: 'text-slate-300',
+    border: 'border-slate-700',
     accent: 'text-blue-400',
-    button: 'bg-blue-600 text-white hover:bg-blue-700',
-    buttonHover: 'hover:bg-gray-700',
-    input: 'bg-gray-700 border-gray-600 text-white',
-    inputFocus: 'focus:border-blue-500'
+    button: 'bg-blue-600 text-white hover:bg-blue-500',
+    buttonHover: 'hover:bg-slate-700',
+    input: 'bg-slate-700 border-slate-600 text-white placeholder:text-slate-400',
+    inputFocus: 'focus:border-blue-400'
   }
 }
 
