@@ -13,7 +13,7 @@ const nextConfig: NextConfig = {
     }
     return config;
   },
-  serverExternalPackages: ['better-sqlite3'],
+  serverExternalPackages: ['better-sqlite3', 'pdf-parse'],
 };
 
 export default nextConfig;

@@ -74,6 +74,29 @@ function messagesToText(messages) {
     .join('\n\n')
 }
 
+/** 从 messages 里提取 OpenAI image_url 内容，落地成临时文件，返回文件路径数组 */
+function extractImages(messages) {
+  if (!Array.isArray(messages)) return []
+  ensureDirs()
+  const files = []
+  for (const m of messages) {
+    if (!Array.isArray(m.content)) continue
+    for (const part of m.content) {
+      if (part && part.type === 'image_url' && part.image_url && part.image_url.url) {
+        const url = part.image_url.url
+        const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/s.exec(url)
+        if (match) {
+          const ext = (match[1].split('/')[1] || 'png').replace('jpeg', 'jpg')
+          const file = path.join(REQ_DIR, `img-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${ext}`)
+          fs.writeFileSync(file, Buffer.from(match[2], 'base64'))
+          files.push(file)
+        }
+      }
+    }
+  }
+  return files
+}
+
 /** 从可能含 markdown 代码块/多余文字的文本中提取出 JSON 对象字符串 */
 function extractJson(text) {
   if (!text) return null
@@ -199,7 +222,7 @@ function detectCli() {
 
 const q = (s) => JSON.stringify(s) // 简单 shell 转义
 
-function runCli(promptText) {
+function runCli(promptText, imageFiles = []) {
   ensureDirs()
   const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
   const promptFile = path.join(REQ_DIR, `cli-${stamp}.txt`)
@@ -209,6 +232,9 @@ function runCli(promptText) {
   let shellCmd
   let useStdin = true
   let readFromOut = false
+
+  // 图片参数(仅 codex 支持 -i)
+  const imageArgs = imageFiles.map((f) => `-i ${q(f)}`).join(' ')
 
   const tmpl = process.env.FAKE_LLM_CLI_CMD
   try {
@@ -223,8 +249,8 @@ function runCli(promptText) {
         return { error: '未检测到 codex / claude / ollama。请安装其一(或装 Codex 桌面客户端)，或设置 FAKE_LLM_CLI_CMD。' }
       }
       if (cli.kind === 'codex') {
-        // 非交互、只读沙箱、把最终回复写到文件(stdout 含 agent 日志，不干净)
-        shellCmd = `${q(cli.bin)} exec --skip-git-repo-check -s read-only -o ${q(outFile)} -`
+        // 非交互、只读沙箱、把最终回复写到文件(stdout 含 agent 日志，不干净)；有图片则用 -i
+        shellCmd = `${q(cli.bin)} exec --skip-git-repo-check -s read-only ${imageArgs} -o ${q(outFile)} -`
         readFromOut = true
       } else if (cli.kind === 'claude') {
         shellCmd = `${q(cli.bin)} -p`
@@ -248,6 +274,7 @@ function runCli(promptText) {
   } finally {
     try { fs.unlinkSync(promptFile) } catch (_) {}
     try { fs.unlinkSync(outFile) } catch (_) {}
+    for (const f of imageFiles) { try { fs.unlinkSync(f) } catch (_) {} }
   }
 }
 
@@ -347,7 +374,8 @@ function startServer() {
       const n = ++reqCount
       const model = body.model
       const promptText = messagesToText(body.messages)
-      log(`#${n} ${color('bold', MODE)} 模式  model=${model}  ${promptText.length} chars`)
+      const imageFiles = MODE === 'cli' ? extractImages(body.messages) : []
+      log(`#${n} ${color('bold', MODE)} 模式  model=${model}  ${promptText.length} chars${imageFiles.length ? `  🖼 ${imageFiles.length} 图` : ''}`)
 
       const finish = (content) => send(200, chatCompletionResponse(model, normalizeContent(content, body)))
       const fail = (msg) => send(500, { error: { message: msg, type: 'fake_llm_error' } })
@@ -356,7 +384,7 @@ function startServer() {
         return finish(buildMockContent(body))
       }
       if (MODE === 'cli') {
-        const r = runCli(promptText)
+        const r = runCli(promptText, imageFiles)
         if (r.error) { log(color('red', '✗ ' + r.error)); return fail(r.error) }
         return finish(r.text)
       }

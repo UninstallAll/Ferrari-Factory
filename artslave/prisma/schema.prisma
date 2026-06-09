@@ -358,3 +358,88 @@ model QualityCheck {
 
   @@map("quality_checks")
 }
+
+// ===== DeepSearch 知识图谱 =====
+
+// 一次深度搜索运行
+model GraphRun {
+  id          String    @id @default(cuid())
+  seedName    String // 种子实体名
+  seedType    String // 种子类型: artist|exhibition|institution|curator|movement|location
+  status      String    @default("pending") // pending|running|completed|failed|stopped
+  maxDepth    Int       @default(2)
+  maxPerLevel Int       @default(8)
+  progress    Int       @default(0) // 0-100
+  message     String? // 当前进度文案
+  error       String?
+  nodeCount   Int       @default(0)
+  edgeCount   Int       @default(0)
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  nodes GraphNode[]
+  edges GraphEdge[]
+  logs  GraphLog[]
+
+  @@map("graph_runs")
+}
+
+// 运行过程日志(实时进程控制台)
+model GraphLog {
+  id        String   @id @default(cuid())
+  runId     String
+  seq       Int // 自增序号(前端按序展示/增量拉取)
+  level     String   @default("info") // info|step|llm|success|warn|error
+  message   String
+  meta      String? // 额外结构化信息 JSON
+  createdAt DateTime @default(now())
+
+  run GraphRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, seq])
+  @@map("graph_logs")
+}
+
+// 图谱节点
+model GraphNode {
+  id             String   @id @default(cuid())
+  runId          String
+  key            String // 规范去重键: type:slug(name)
+  name           String
+  type           String
+  depth          Int
+  relevanceScore Float    @default(0) // 与种子的相关性 0-1
+  importance     Float    @default(0) // 最终综合重要度 0-1
+  pagerank       Float    @default(0)
+  degree         Int      @default(0)
+  discoveryCount Int      @default(1) // 被多少条路径发现(重要度信号)
+  parentKey      String? // 首次发现它的父节点
+  data           String? // 额外属性 JSON (year, evidence, description...)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  run GraphRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, key])
+  @@map("graph_nodes")
+}
+
+// 图谱边(关系)
+model GraphEdge {
+  id         String   @id @default(cuid())
+  runId      String
+  sourceKey  String
+  targetKey  String
+  type       String // 关系类型
+  weight     Float    @default(0.5) // 关系强度/重要度 0-1
+  confidence Float    @default(0.8)
+  evidence   String? // 依据 JSON 数组
+  createdAt  DateTime @default(now())
+
+  run GraphRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, sourceKey, targetKey, type])
+  @@map("graph_edges")
+}
