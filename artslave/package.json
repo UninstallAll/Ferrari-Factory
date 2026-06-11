@@ -37,6 +37,7 @@
     "@reactflow/minimap": "^11.7.14",
     "@supabase/supabase-js": "^2.50.3",
     "better-sqlite3": "^12.2.0",
+    "cheerio": "^1.2.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "d3-force": "^3.0.0",

@@ -7,6 +7,39 @@ import { NODE_TYPES } from '@/lib/graphSearch/types'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
+    const seedUrl = String(body.seedUrl || '').trim()
+    const maxDepth = Math.min(Math.max(parseInt(body.maxDepth) || 2, 1), 4)
+    const maxPerLevel = Math.min(Math.max(parseInt(body.maxPerLevel) || 6, 1), 15)
+
+    // 爬取模式：给定网址 → 自动翻页抓取真实正文 → 批量抽取实体 → 深挖
+    if (seedUrl) {
+      if (!/^https?:\/\//i.test(seedUrl)) {
+        return NextResponse.json({ success: false, error: 'seedUrl 必须是 http(s) 链接' }, { status: 400 })
+      }
+      const crawlPages = Math.min(Math.max(parseInt(body.crawlPages) || 4, 1), 20)
+      let label = String(body.seedName || '').trim()
+      if (!label) {
+        try {
+          label = new URL(seedUrl).hostname
+        } catch {
+          label = seedUrl
+        }
+      }
+      const run = await prisma.graphRun.create({
+        data: {
+          seedName: label,
+          seedType: 'institution',
+          seedUrl,
+          crawlPages,
+          maxDepth,
+          maxPerLevel,
+          status: 'pending',
+        },
+      })
+      runDeepSearch(run.id).catch((err) => console.error('runDeepSearch error:', err))
+      return NextResponse.json({ success: true, runId: run.id })
+    }
+
     const seedName = String(body.seedName || '').trim()
     const seedType = String(body.seedType || 'artist').trim()
 
@@ -19,9 +52,6 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
-
-    const maxDepth = Math.min(Math.max(parseInt(body.maxDepth) || 2, 1), 4)
-    const maxPerLevel = Math.min(Math.max(parseInt(body.maxPerLevel) || 6, 1), 15)
 
     const run = await prisma.graphRun.create({
       data: { seedName, seedType, maxDepth, maxPerLevel, status: 'pending' },

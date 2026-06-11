@@ -1,12 +1,12 @@
 'use client'
 
 import { useState, useEffect, useRef, useMemo, useCallback, type MouseEvent as ReactMouseEvent, type Dispatch, type SetStateAction } from 'react'
-import ReactFlow, { Background, Controls, MiniMap, Node, Edge, MarkerType, Handle, Position, useNodesState, useEdgesState, type NodeProps } from 'reactflow'
+import ReactFlow, { Background, Controls, MiniMap, Node, Edge, MarkerType, Handle, Position, useNodesState, useEdgesState, useViewport, type NodeProps } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { forceSimulation, forceManyBody, forceLink, forceCollide, forceX, forceY, type Simulation } from 'd3-force'
 import { Search, Play, Square, Loader2, ArrowLeft, Type, Link2, Upload, FileText, ImageIcon, X, Sparkles, History, Trash2, RefreshCw, Filter,
   Palette, Building2, UserCheck, Waves, MapPin, GraduationCap, Newspaper, Frame, Circle,
-  Wand2, ChevronDown, Target, Network, LayoutGrid, GitBranch, Grid3x3, Atom, type LucideIcon } from 'lucide-react'
+  Wand2, ChevronDown, Target, Network, LayoutGrid, GitBranch, Grid3x3, Atom, Maximize2, type LucideIcon } from 'lucide-react'
 
 interface ApiNode {
   key: string
@@ -18,7 +18,7 @@ interface ApiNode {
   pagerank: number
   degree: number
   discoveryCount: number
-  data: { year?: number | null; evidence?: string | null; runCount?: number } | null
+  data: { year?: number | null; evidence?: string | null; sourceUrl?: string | null; runCount?: number } | null
 }
 interface ApiEdge {
   sourceKey: string
@@ -106,11 +106,42 @@ const LOG_LEVEL_STYLE: Record<string, { tag: string; cls: string }> = {
   error: { tag: 'ERR', cls: 'text-red-400' },
 }
 
-// 自定义“地图标记”节点：彩色圆形 + 类别图标 + 下方名字标签
+// 按屏幕像素推算默认节点倍率(节点数越多、画布越小 → 倍率越小)
+function computeDefaultNodeSizeScale(width: number, height: number, nodeCount: number): number {
+  if (nodeCount <= 0 || width <= 0 || height <= 0) return 1
+  const minDim = Math.min(width, height)
+  const cols = Math.max(1, Math.ceil(Math.sqrt(nodeCount)))
+  const idealSpacing = minDim / (cols * 2.6)
+  const refNodePx = 48
+  return Math.min(2.2, Math.max(0.4, idealSpacing / refNodePx))
+}
+
+function baseNodeSize(importance: number): number {
+  return 34 + importance * 66
+}
+
+// 屏幕像素 → 图谱坐标(抵消 ReactFlow 缩放，使节点在屏幕上保持目标像素大小)
+function toGraphPx(screenPx: number, zoom: number): number {
+  return screenPx / Math.max(zoom, 0.08)
+}
+
+// 按名字长度估算标签所需宽度(屏幕像素)，避免长单词/长名被挤成省略号
+function estimateLabelScreenWidth(name: string, screenFontSize: number, screenSize: number): number {
+  const perLine = Math.max(140, screenSize * 3.6)
+  let charW = 0
+  for (const ch of name) charW += ch.charCodeAt(0) > 255 ? screenFontSize : screenFontSize * 0.52
+  // 尽量单行容纳；仍设上限，超出则换行到 3 行内
+  const want = Math.max(perLine, charW * 1.05)
+  return Math.min(want, perLine * 2.8)
+}
+
+// 自定义“地图标记”节点：彩色圆形 + 类别图标 + 下方名字标签(随缩放自适应)
 interface EntityNodeData {
   name: string
   type: string
-  size: number
+  baseSize: number
+  sizeScale: number
+  viewportZoom: number
   color: string
   selected: boolean
   related?: boolean
@@ -118,8 +149,21 @@ interface EntityNodeData {
   dim?: boolean
 }
 function EntityNode({ data }: NodeProps<EntityNodeData>) {
+  const { zoom: liveZoom } = useViewport()
+  const zoom = data.viewportZoom || liveZoom || 1
   const Icon = TYPE_ICONS[data.type] || Circle
-  const s = data.size
+  const screenSize = data.baseSize * data.sizeScale
+  const s = toGraphPx(screenSize, zoom)
+  // 先在屏幕像素空间算字号/宽度，再换算到图谱坐标(避免被错误的 graph 上限卡死)
+  const screenFontSize = Math.max(9, Math.min(18, screenSize * 0.24))
+  const fontSize = toGraphPx(screenFontSize, zoom)
+  const screenLabelWidth = estimateLabelScreenWidth(data.name, screenFontSize, screenSize)
+  const labelMaxWidth = toGraphPx(screenLabelWidth, zoom)
+  const labelGap = toGraphPx(4 * data.sizeScale, zoom)
+  const labelLineHeight = 1.22
+  const labelMaxLines = 3
+  const labelMaxHeight = fontSize * labelLineHeight * labelMaxLines
+  const wrapWidth = Math.max(s, labelMaxWidth)
   const border = data.selected
     ? '4px solid #facc15'
     : data.matched
@@ -140,9 +184,10 @@ function EntityNode({ data }: NodeProps<EntityNodeData>) {
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        width: Math.max(s, 64),
+        width: wrapWidth,
+        minWidth: s,
         opacity: data.dim ? 0.2 : 1,
-        transition: 'opacity 0.2s',
+        transition: 'opacity 0.15s',
       }}
     >
       <Handle type="target" position={Position.Top} style={{ opacity: 0, pointerEvents: 'none' }} />
@@ -159,19 +204,25 @@ function EntityNode({ data }: NodeProps<EntityNodeData>) {
           boxShadow,
         }}
       >
-        <Icon size={Math.max(14, s * 0.46)} color="#fff" strokeWidth={2.2} />
+        <Icon size={Math.max(10, s * 0.46)} color="#fff" strokeWidth={2.2} />
       </div>
       <div
         style={{
-          marginTop: 4,
-          fontSize: 11,
+          marginTop: labelGap,
+          fontSize,
           fontWeight: 600,
           color: '#1e293b',
           textAlign: 'center',
-          lineHeight: 1.15,
-          maxWidth: 96,
-          maxHeight: 28,
+          lineHeight: labelLineHeight,
+          width: labelMaxWidth,
+          maxHeight: labelMaxHeight,
+          display: '-webkit-box',
+          WebkitLineClamp: labelMaxLines,
+          WebkitBoxOrient: 'vertical',
           overflow: 'hidden',
+          overflowWrap: 'anywhere',
+          wordBreak: 'break-word',
+          hyphens: 'auto',
           textShadow: '0 1px 2px rgba(255,255,255,0.9)',
         }}
       >
@@ -293,7 +344,7 @@ function layoutGrid(nodes: ApiNode[]): Map<string, { x: number; y: number }> {
 }
 
 // 力导向：Fruchterman-Reingold 简化版，一次性迭代（点击时跑）
-function layoutForce(nodes: ApiNode[], edges: ApiEdge[]): Map<string, { x: number; y: number }> {
+function layoutForce(nodes: ApiNode[], edges: ApiEdge[], sizeScale = 1): Map<string, { x: number; y: number }> {
   const init = layout(nodes)
   const keys = nodes.map((n) => n.key)
   const keySet = new Set(keys)
@@ -303,7 +354,7 @@ function layoutForce(nodes: ApiNode[], edges: ApiEdge[]): Map<string, { x: numbe
     P[n.key] = { x: p.x || (Math.random() - 0.5) * 50, y: p.y || (Math.random() - 0.5) * 50 }
   }
   const links = edges.filter((e) => keySet.has(e.sourceKey) && keySet.has(e.targetKey))
-  const k = Math.max(120, Math.sqrt((keys.length * 90000) / Math.max(1, keys.length)) + 110)
+  const k = Math.max(55, Math.sqrt((keys.length * 22000) / Math.max(1, keys.length)) + 48) * sizeScale
   let temp = k * 1.5
   const iters = keys.length > 180 ? 160 : 260
   for (let it = 0; it < iters; it++) {
@@ -353,8 +404,8 @@ function layoutForce(nodes: ApiNode[], edges: ApiEdge[]): Map<string, { x: numbe
   return out
 }
 
-function computeLayout(mode: LayoutMode, nodes: ApiNode[], edges: ApiEdge[]): Map<string, { x: number; y: number }> {
-  if (mode === 'force') return layoutForce(nodes, edges)
+function computeLayout(mode: LayoutMode, nodes: ApiNode[], edges: ApiEdge[], sizeScale = 1): Map<string, { x: number; y: number }> {
+  if (mode === 'force') return layoutForce(nodes, edges, sizeScale)
   if (mode === 'type') return layoutByType(nodes)
   if (mode === 'tree') return layoutTree(nodes)
   if (mode === 'grid') return layoutGrid(nodes)
@@ -387,6 +438,7 @@ export default function DeepSearchPage() {
   const [seedType, setSeedType] = useState('artist')
   const [maxDepth, setMaxDepth] = useState(2)
   const [maxPerLevel, setMaxPerLevel] = useState(6)
+  const [crawlPages, setCrawlPages] = useState(4) // 链接模式：自动翻页页数
 
   // 多模态起点输入
   const [inputMode, setInputMode] = useState<InputMode>('text')
@@ -440,11 +492,19 @@ export default function DeepSearchPage() {
   // 图谱整理：布局方式 + 下拉菜单
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('concentric')
   const [showLayoutMenu, setShowLayoutMenu] = useState(false)
-  const rfInstanceRef = useRef<{ fitView: (opts?: { duration?: number; padding?: number }) => void } | null>(null)
+  const rfInstanceRef = useRef<{
+    fitView: (opts?: { duration?: number; padding?: number }) => void
+    getViewport?: () => { zoom: number; x: number; y: number }
+  } | null>(null)
   const arrangeSigRef = useRef<string>('')
 
   // Obsidian 式「灵动」物理布局(d3-force 持续模拟，节点自动归位)
-  const [livePhysics, setLivePhysics] = useState(true)
+  const [livePhysics, setLivePhysics] = useState(false)
+  const [viewportZoom, setViewportZoom] = useState(1)
+  const [nodeSizeScale, setNodeSizeScale] = useState(1)
+  const userSizedRef = useRef(false)
+  const graphWrapRef = useRef<HTMLDivElement>(null)
+  const [containerSize, setContainerSize] = useState({ w: 900, h: 600 })
   const simRef = useRef<Simulation<SimNode, undefined> | null>(null)
   const simNodesRef = useRef<Map<string, SimNode>>(new Map())
   const rfNodesPosRef = useRef<Map<string, { x: number; y: number }>>(new Map())
@@ -612,6 +672,45 @@ export default function DeepSearchPage() {
   }
 
   const start = async () => {
+    // 链接模式 → 爬取式深度搜索：抓取该网址(自动翻页) → 批量抽取实体 → 深挖
+    if (inputMode === 'url') {
+      const u = urlValue.trim()
+      if (!/^https?:\/\//i.test(u)) {
+        setResolveError('请输入有效的 http(s) 链接')
+        return
+      }
+      setResolveError(null)
+      stopPolling()
+      setViewMode('run')
+      setApiNodes([])
+      setApiEdges([])
+      setSelected(null)
+      setLogs([])
+      setConsoleOpen(true)
+      const res = await fetch('/api/deep-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seedUrl: u, crawlPages, maxDepth, maxPerLevel }),
+      })
+      const data = await res.json()
+      if (!data.success) {
+        setResolveError('启动失败: ' + data.error)
+        return
+      }
+      let label = u
+      try {
+        label = new URL(u).hostname
+      } catch {
+        /* keep url */
+      }
+      setRunId(data.runId)
+      setRun({ id: data.runId, seedName: label, seedType: 'institution', status: 'pending', progress: 0, message: '启动中…', nodeCount: 0, edgeCount: 0 })
+      fetchHistory()
+      poll(data.runId)
+      pollRef.current = setInterval(() => poll(data.runId), 2500)
+      return
+    }
+
     let seed: ResolvedSeed
     try {
       seed = await resolveSeedNow()
@@ -765,12 +864,33 @@ export default function DeepSearchPage() {
     return s
   }, [selected, filteredEdges])
 
+  const defaultNodeSizeScale = useMemo(
+    () => computeDefaultNodeSizeScale(containerSize.w, containerSize.h, filteredNodes.length),
+    [containerSize, filteredNodes.length]
+  )
+
+  // 监听图谱容器尺寸(用于按屏幕像素推算默认节点大小)
+  useEffect(() => {
+    const el = graphWrapRef.current
+    if (!el) return
+    const sync = () => setContainerSize({ w: el.clientWidth, h: el.clientHeight })
+    sync()
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  // 节点集合变化时自动套用屏幕自适应默认大小(用户手动调过后不再覆盖)
+  useEffect(() => {
+    if (userSizedRef.current || filteredNodes.length === 0) return
+    setNodeSizeScale(defaultNodeSizeScale)
+  }, [defaultNodeSizeScale, filteredNodes.length])
+
   const flowNodes: Node[] = useMemo(() => {
     const pos = layout(filteredNodes)
     const searching = matchedKeys != null
     const focusing = relatedKeys != null
     return filteredNodes.map((n) => {
-      const size = 34 + n.importance * 66
       const color = TYPE_COLORS[n.type] || '#64748b'
       const isSel = selected?.key === n.key
       const inFocus = relatedKeys?.has(n.key) ?? false
@@ -783,7 +903,9 @@ export default function DeepSearchPage() {
         data: {
           name: n.name,
           type: n.type,
-          size,
+          baseSize: baseNodeSize(n.importance),
+          sizeScale: nodeSizeScale,
+          viewportZoom,
           color,
           selected: isSel,
           matched: searching && isMatch && !isSel,
@@ -792,7 +914,7 @@ export default function DeepSearchPage() {
         },
       }
     })
-  }, [filteredNodes, selected, relatedKeys, matchedKeys])
+  }, [filteredNodes, selected, relatedKeys, matchedKeys, nodeSizeScale, viewportZoom])
 
   // 简洁优雅的连线：默认极细浅灰、无箭头无文字；只有选中节点的相连边才加粗高亮 + 显示关系标签
   const flowEdges: Edge[] = useMemo(
@@ -864,13 +986,15 @@ export default function DeepSearchPage() {
     const seed = layout(filteredNodes)
     const screenPos = rfNodesPosRef.current
     const prevSim = simNodesRef.current
+    const zoom = rfInstanceRef.current?.getViewport?.()?.zoom ?? 1
     const simNodes: SimNode[] = filteredNodes.map((n) => {
       const here = screenPos.get(n.key) || prevSim.get(n.key) || seed.get(n.key)
+      const screenR = baseNodeSize(n.importance) * nodeSizeScale * 0.5 + 10
       return {
         id: n.key,
-        r: (34 + n.importance * 66) / 2 + 30,
-        x: here?.x ?? (Math.random() - 0.5) * 600,
-        y: here?.y ?? (Math.random() - 0.5) * 600,
+        r: toGraphPx(screenR, zoom),
+        x: here?.x ?? (Math.random() - 0.5) * 280,
+        y: here?.y ?? (Math.random() - 0.5) * 280,
         vx: 0,
         vy: 0,
       }
@@ -878,19 +1002,21 @@ export default function DeepSearchPage() {
     const map = new Map(simNodes.map((s) => [s.id, s]))
     simNodesRef.current = map
     const links = filteredEdges.map((e) => ({ source: e.sourceKey, target: e.targetKey }))
+    const linkDist = toGraphPx(62 * nodeSizeScale, zoom)
+    const charge = -95 * nodeSizeScale * Math.min(1.4, Math.sqrt(filteredNodes.length / 30))
 
     const sim = forceSimulation<SimNode>(simNodes)
-      .force('charge', forceManyBody<SimNode>().strength(-380).distanceMax(1100))
+      .force('charge', forceManyBody<SimNode>().strength(charge).distanceMax(toGraphPx(420, zoom)))
       .force(
         'link',
         forceLink<SimNode, { source: string; target: string }>(links)
           .id((d) => d.id)
-          .distance(150)
-          .strength(0.16)
+          .distance(linkDist)
+          .strength(0.22)
       )
-      .force('collide', forceCollide<SimNode>().radius((d) => d.r).strength(0.85).iterations(2))
-      .force('x', forceX(0).strength(0.04))
-      .force('y', forceY(0).strength(0.04))
+      .force('collide', forceCollide<SimNode>().radius((d) => d.r).strength(0.9).iterations(2))
+      .force('x', forceX(0).strength(0.06))
+      .force('y', forceY(0).strength(0.06))
       .alpha(0.9)
       .alphaDecay(0.02)
       .velocityDecay(0.42)
@@ -903,9 +1029,9 @@ export default function DeepSearchPage() {
         })
       )
     })
-    // 稳定后自动居中一次
+    // 稳定后自动居中(留白适中，避免缩放过小导致节点/文字显得遥远)
     sim.on('end', () => {
-      rfInstanceRef.current?.fitView({ duration: 400, padding: 0.2 })
+      rfInstanceRef.current?.fitView({ duration: 400, padding: 0.12 })
     })
     simRef.current = sim
 
@@ -914,7 +1040,7 @@ export default function DeepSearchPage() {
     }
     // 仅依赖结构签名与开关；位置从 ref 读取以免每帧重建
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphSig, livePhysics])
+  }, [graphSig, livePhysics, nodeSizeScale])
 
   // 「仅显示选择项」开启 + 非物理模式时：可见集合或布局变化 → 自动重新排列(Finder 清理效果)
   useEffect(() => {
@@ -926,10 +1052,10 @@ export default function DeepSearchPage() {
     const sig = layoutMode + '|' + filteredNodes.map((n) => n.key).join(',')
     if (sig === arrangeSigRef.current) return
     arrangeSigRef.current = sig
-    const pos = computeLayout(layoutMode, filteredNodes, filteredEdges)
+    const pos = computeLayout(layoutMode, filteredNodes, filteredEdges, nodeSizeScale)
     setRfNodes((prev) => prev.map((n) => ({ ...n, position: pos.get(n.id) || n.position })))
-    setTimeout(() => rfInstanceRef.current?.fitView({ duration: 500, padding: 0.2 }), 60)
-  }, [onlyMatched, livePhysics, layoutMode, filteredNodes, filteredEdges, setRfNodes])
+    setTimeout(() => rfInstanceRef.current?.fitView({ duration: 500, padding: 0.12 }), 60)
+  }, [onlyMatched, livePhysics, layoutMode, filteredNodes, filteredEdges, nodeSizeScale, setRfNodes])
 
   const onNodeClick = useCallback(
     (_: any, node: Node) => {
@@ -979,12 +1105,24 @@ export default function DeepSearchPage() {
       setShowLayoutMenu(false)
       setLivePhysics(false)
       simRef.current?.stop()
-      const pos = computeLayout(mode, filteredNodes, filteredEdges)
+      const pos = computeLayout(mode, filteredNodes, filteredEdges, nodeSizeScale)
       setRfNodes((prev) => prev.map((n) => ({ ...n, position: pos.get(n.id) || n.position })))
-      setTimeout(() => rfInstanceRef.current?.fitView({ duration: 600, padding: 0.2 }), 60)
+      setTimeout(() => rfInstanceRef.current?.fitView({ duration: 600, padding: 0.12 }), 60)
     },
-    [filteredNodes, filteredEdges, setRfNodes]
+    [filteredNodes, filteredEdges, nodeSizeScale, setRfNodes]
   )
+
+  const resetNodeSizeToDefault = useCallback(() => {
+    userSizedRef.current = false
+    setNodeSizeScale(defaultNodeSizeScale)
+    simRef.current?.alpha(0.35).restart()
+  }, [defaultNodeSizeScale])
+
+  const onNodeSizeScaleChange = useCallback((v: number) => {
+    userSizedRef.current = true
+    setNodeSizeScale(v)
+    simRef.current?.alpha(0.3).restart()
+  }, [])
 
   return (
     <div className="h-screen overflow-hidden bg-slate-100 flex flex-col">
@@ -1033,12 +1171,31 @@ export default function DeepSearchPage() {
             )}
 
             {inputMode === 'url' && (
-              <input
-                value={urlValue}
-                onChange={(e) => { setUrlValue(e.target.value); setResolvedSeed(null); lastSigRef.current = '' }}
-                className="w-full border-2 border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-900"
-                placeholder="粘贴链接，如艺术家维基页 / 展览官网 / 论文页面 (https://…)"
-              />
+              <div className="space-y-2">
+                <input
+                  value={urlValue}
+                  onChange={(e) => { setUrlValue(e.target.value); setResolvedSeed(null); lastSigRef.current = '' }}
+                  className="w-full border-2 border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-900"
+                  placeholder="粘贴列表/目录页或内容页，如 https://art-action.org/site/en/cat/index.php?page=1"
+                />
+                <div className="flex items-center gap-2 flex-wrap text-xs">
+                  <span className="flex items-center gap-1 text-sky-700 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5">
+                    <Link2 className="w-3 h-3" /> 爬取模式
+                  </span>
+                  <span className="text-slate-500">自动翻页抓取真实正文 → 批量抽取实体 → 重点实体继续深挖</span>
+                  <label className="flex items-center gap-1.5 text-slate-600 ml-1">
+                    翻页数
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={crawlPages}
+                      onChange={(e) => setCrawlPages(Math.min(20, Math.max(1, parseInt(e.target.value) || 1)))}
+                      className="w-16 border-2 border-slate-300 rounded-lg px-2 py-1 text-slate-900 focus:outline-none focus:border-slate-900"
+                    />
+                  </label>
+                </div>
+              </div>
             )}
 
             {inputMode === 'file' && (
@@ -1098,20 +1255,22 @@ export default function DeepSearchPage() {
 
         {/* 参数 + 操作 */}
         <div className="flex flex-wrap items-end gap-3">
-          <div>
-            <label className="block text-xs text-slate-500 mb-1">类型{resolvedSeed ? '（可改）' : ''}</label>
-            <select
-              value={seedType}
-              onChange={(e) => setSeedType(e.target.value)}
-              className="border-2 border-slate-300 rounded-xl px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-slate-900"
-            >
-              {NODE_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {TYPE_LABELS[t]}
-                </option>
-              ))}
-            </select>
-          </div>
+          {inputMode !== 'url' && (
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">类型{resolvedSeed ? '（可改）' : ''}</label>
+              <select
+                value={seedType}
+                onChange={(e) => setSeedType(e.target.value)}
+                className="border-2 border-slate-300 rounded-xl px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-slate-900"
+              >
+                {NODE_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {TYPE_LABELS[t]}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="block text-xs text-slate-500 mb-1">深度 {maxDepth}</label>
             <input type="range" min={1} max={3} value={maxDepth} onChange={(e) => setMaxDepth(+e.target.value)} className="w-24" />
@@ -1384,8 +1543,27 @@ export default function DeepSearchPage() {
           </button>
         )}
 
-        <div className="flex-1 relative">
-          <ReactFlow nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onNodeClick={onNodeClick} onNodeDragStart={onNodeDragStart} onNodeDrag={onNodeDrag} onNodeDragStop={onNodeDragStop} onPaneClick={() => { setSelected(null); setShowLayoutMenu(false) }} onInit={(inst) => { rfInstanceRef.current = inst }} fitView minZoom={0.1}>
+        <div className="flex-1 relative" ref={graphWrapRef}>
+          <ReactFlow
+            nodes={rfNodes}
+            edges={rfEdges}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onNodeClick={onNodeClick}
+            onNodeDragStart={onNodeDragStart}
+            onNodeDrag={onNodeDrag}
+            onNodeDragStop={onNodeDragStop}
+            onMove={(_, vp) => setViewportZoom(vp.zoom)}
+            onPaneClick={() => { setSelected(null); setShowLayoutMenu(false) }}
+            onInit={(inst) => {
+              rfInstanceRef.current = inst
+              setViewportZoom(inst.getViewport().zoom)
+            }}
+            fitView
+            minZoom={0.15}
+            maxZoom={2.5}
+          >
             <Background color="#e2e8f0" gap={26} size={1.5} />
             <Controls />
             <MiniMap nodeColor={(n) => ((n.data as EntityNodeData)?.color) || '#64748b'} pannable zoomable />
@@ -1393,7 +1571,7 @@ export default function DeepSearchPage() {
 
           {/* 浮动工具栏(左上)：灵动开关 + 整理图谱 */}
           {filteredNodes.length > 0 && (
-            <div className="absolute top-3 left-3 z-10 flex items-center gap-2">
+            <div className="absolute top-3 left-3 z-10 flex flex-wrap items-center gap-2 max-w-[calc(100%-1.5rem)]">
               <button
                 onClick={toggleLivePhysics}
                 className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-medium border-2 shadow-sm transition-colors ${
@@ -1436,6 +1614,30 @@ export default function DeepSearchPage() {
                     ))}
                   </div>
                 )}
+              </div>
+              <div
+                className="flex items-center gap-2 bg-white/95 backdrop-blur border-2 border-slate-200 rounded-xl px-3 py-1.5 shadow-sm"
+                title="调节节点在屏幕上的显示大小；缩放图谱时节点/文字会自动适应"
+              >
+                <span className="text-xs text-slate-500 whitespace-nowrap">节点</span>
+                <input
+                  type="range"
+                  min={0.35}
+                  max={2.2}
+                  step={0.05}
+                  value={nodeSizeScale}
+                  onChange={(e) => onNodeSizeScaleChange(parseFloat(e.target.value))}
+                  className="w-20 accent-slate-900"
+                />
+                <span className="text-xs font-medium text-slate-700 w-9 tabular-nums">{nodeSizeScale.toFixed(1)}×</span>
+                <button
+                  onClick={resetNodeSizeToDefault}
+                  className="flex items-center gap-1 text-xs font-medium text-slate-600 hover:text-slate-900 border-l border-slate-200 pl-2 ml-0.5"
+                  title={`恢复为屏幕自适应默认大小（约 ${defaultNodeSizeScale.toFixed(1)}×）`}
+                >
+                  <Maximize2 className="w-3 h-3" />
+                  默认
+                </button>
               </div>
             </div>
           )}
@@ -1540,6 +1742,16 @@ export default function DeepSearchPage() {
                   </div>
                   {selected.data?.evidence && (
                     <p className="text-xs text-slate-500 mt-3 leading-relaxed">{selected.data.evidence}</p>
+                  )}
+                  {selected.data?.sourceUrl && (
+                    <a
+                      href={selected.data.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center gap-1 text-xs text-blue-600 hover:underline break-all"
+                    >
+                      <Link2 className="w-3 h-3 shrink-0" /> 来源 · 可核验
+                    </a>
                   )}
                 </div>
               )}

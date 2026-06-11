@@ -6,6 +6,9 @@
 
 import { prisma } from '@/lib/prisma'
 import { expandEntity } from './llmExpander'
+import { extractPageGraph } from './pageExtractor'
+import { crawlListing } from './crawler'
+import { verifyNeighbor } from './verifier'
 import { computeImportance } from './importance'
 import {
   GraphNodeData,
@@ -38,42 +41,63 @@ export async function runDeepSearch(runId: string): Promise<void> {
   const config: SearchConfig = {
     maxDepth: run.maxDepth,
     maxPerLevel: run.maxPerLevel,
-    maxNeighborsPerNode: 8,
-    globalNodeCap: 150,
+    maxNeighborsPerNode: 10,
+    globalNodeCap: 250,
   }
 
-  await log(`开始搜索：「${run.seedName}」（${run.seedType}）`, 'step')
-  await log(`参数：最大深度 ${config.maxDepth} · 每层扩展 ${config.maxPerLevel} · 单点最多 ${config.maxNeighborsPerNode} 邻居`, 'info')
+  const crawlMode = !!run.seedUrl
+  const provider = (process.env.RETRIEVAL_PROVIDER || 'wikipedia').toLowerCase()
 
   const nodes = new Map<string, GraphNodeData>()
   const edges = new Map<string, GraphEdgeData>()
-
-  const seedKey = canonicalKey(run.seedType, run.seedName)
-  nodes.set(seedKey, {
-    key: seedKey,
-    name: run.seedName,
-    type: run.seedType as any,
-    depth: 0,
-    relevanceScore: 1,
-    discoveryCount: 1,
-    degree: 0,
-    pagerank: 0,
-    importance: 1,
-  })
 
   await prisma.graphRun.update({
     where: { id: runId },
     data: { status: 'running', startedAt: new Date(), message: '初始化…', progress: 2 },
   })
-  await persistNodes(runId, [nodes.get(seedKey)!])
 
-  // 预估总扩展次数用于进度
-  let expandTarget = 1
-  for (let d = 1; d < config.maxDepth; d++) expandTarget += config.maxPerLevel
-  let expandsDone = 0
+  // 深挖(BFS)的起始层：爬取模式下种子节点为爬到的第 1 层，故从第 1 层开始向外深挖
+  let startDepth = 0
 
   try {
-    for (let depth = 0; depth < config.maxDepth; depth++) {
+    if (crawlMode) {
+      await log(`开始爬取式搜索：${run.seedUrl}`, 'step')
+      await log(`流程：① 抓取网页(自动翻页) → ② 从真实正文批量抽取实体/关系 → ③ 对重点实体用真实资料(来源=${provider})继续深挖`, 'info')
+      await seedFromCrawl(runId, run.seedUrl!, run.crawlPages, nodes, edges, config, log)
+      if (nodes.size === 0) {
+        throw new Error('未能从该网址抓取/抽取到任何实体，请检查链接是否可访问、是否为列表/内容页')
+      }
+      startDepth = 1
+    } else {
+      await log(`开始搜索：「${run.seedName}」（${run.seedType}）`, 'step')
+      await log(`参数：最大深度 ${config.maxDepth} · 每层扩展 ${config.maxPerLevel} · 单点最多 ${config.maxNeighborsPerNode} 邻居 · 节点上限 ${config.globalNodeCap}`, 'info')
+      await log(`取证模式：先检索真实资料(来源=${provider})，再从真实正文抽取关系，每条关系都带可核验出处`, 'info')
+      const seedKey = canonicalKey(run.seedType, run.seedName)
+      nodes.set(seedKey, {
+        key: seedKey,
+        name: run.seedName,
+        type: run.seedType as any,
+        depth: 0,
+        relevanceScore: 1,
+        discoveryCount: 1,
+        degree: 0,
+        pagerank: 0,
+        importance: 1,
+      })
+      await persistNodes(runId, [nodes.get(seedKey)!])
+    }
+
+    // 进度区间：爬取模式爬取阶段占用前 60%，深挖占 60→90；单种子模式深挖占 2→90
+    const progressBase = crawlMode ? 60 : 2
+    const progressSpan = 90 - progressBase
+
+    // 预估深挖扩展次数(用于进度)
+    let expandTarget = 0
+    for (let d = startDepth; d < config.maxDepth; d++) expandTarget += d === 0 ? 1 : config.maxPerLevel
+    expandTarget = Math.max(1, expandTarget)
+    let expandsDone = 0
+
+    for (let depth = startDepth; depth < config.maxDepth; depth++) {
       // 选当前层相关性最高的若干节点扩展
       const levelNodes = Array.from(nodes.values())
         .filter((n) => n.depth === depth)
@@ -87,34 +111,51 @@ export async function runDeepSearch(runId: string): Promise<void> {
           await log('⏹ 已手动停止', 'warn')
           return
         }
-        const progress = Math.min(90, Math.round((expandsDone / expandTarget) * 90))
+        const progress = Math.min(90, progressBase + Math.round((expandsDone / expandTarget) * progressSpan))
         await prisma.graphRun.update({
           where: { id: runId },
           data: {
             progress,
-            message: `第 ${depth + 1} 层 · 正在扩展「${node.name}」… (已发现 ${nodes.size} 节点 / ${edges.size} 关系)`,
+            message: `深挖第 ${depth + 1} 层 · 正在扩展「${node.name}」… (已发现 ${nodes.size} 节点 / ${edges.size} 关系)`,
           },
         })
 
         const t0 = Date.now()
-        await log(`调用 Codex 扩展「${node.name}」(${node.type})…`, 'llm')
+        await log(`检索真实资料并扩展「${node.name}」(${node.type})…`, 'llm')
         let expansion
         try {
           expansion = await expandEntity(node.name, node.type, config.maxNeighborsPerNode)
         } catch (err) {
           console.error(`扩展失败 ${node.name}:`, err)
           await log(`⚠ 扩展「${node.name}」失败：${err instanceof Error ? err.message : String(err)}`, 'error')
-          expansion = { canonical: node.name, neighbors: [] }
+          expandsDone++
+          continue
         }
         expandsDone++
-        await log(`Codex 返回 ${expansion.neighbors.length} 个相关实体 (耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s)`, 'info')
+
+        if (!expansion.docCount) {
+          await log(`✗ 未找到「${node.name}」的真实资料，已跳过该节点(不编造)`, 'warn')
+          continue
+        }
+        const srcPreview = (expansion.sources || []).map((s) => s.title).slice(0, 3).join('、')
+        await log(`命中 ${expansion.docCount} 篇真实资料：${srcPreview}`, 'success')
+        await log(`从真实正文抽取 ${expansion.neighbors.length} 个相关实体 (耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s)`, 'info')
+
+        // 核验：只保留有依据/出处的关系
+        const verified = expansion.neighbors
+          .map((nb) => ({ nb, v: verifyNeighbor(nb) }))
+          .filter((x) => x.v.keep)
+        const droppedCount = expansion.neighbors.length - verified.length
+        if (droppedCount > 0) {
+          await log(`核验：丢弃 ${droppedCount} 条缺少依据/出处的关系`, 'warn')
+        }
 
         const touchedNodes: GraphNodeData[] = []
         const touchedEdges: GraphEdgeData[] = []
         const newNames: string[] = []
         let dupCount = 0
 
-        for (const nb of expansion.neighbors) {
+        for (const { nb, v } of verified) {
           const nbKey = canonicalKey(nb.type, nb.name)
           if (nbKey === node.key) continue
 
@@ -137,6 +178,7 @@ export async function runDeepSearch(runId: string): Promise<void> {
               parentKey: node.key,
               year: nb.year,
               evidence: nb.evidence,
+              sourceUrl: nb.sourceUrl ?? null,
               degree: 0,
               pagerank: 0,
               importance: 0,
@@ -148,12 +190,19 @@ export async function runDeepSearch(runId: string): Promise<void> {
             continue // 达到全局上限
           }
 
+          // 关系依据(原文 + 真实出处)
+          const evidenceLine = nb.evidence
+            ? `${nb.evidence}${nb.sourceUrl ? ' —— ' + nb.sourceUrl : ''}`
+            : nb.sourceUrl || ''
+
           // 合并边(无向去重)
           const eid = undirectedEdgeId(node.key, nbKey, nb.relationship)
           const existEdge = edges.get(eid)
           if (existEdge) {
             existEdge.weight = Math.min(1, Math.max(existEdge.weight, nb.strength) + 0.05)
-            if (nb.evidence) existEdge.evidence.push(nb.evidence)
+            // 多来源印证 → 提升可信度
+            existEdge.confidence = Math.min(1, Math.max(existEdge.confidence, v.confidence) + 0.05)
+            if (evidenceLine) existEdge.evidence.push(evidenceLine)
             touchedEdges.push(existEdge)
           } else {
             const edge: GraphEdgeData = {
@@ -161,8 +210,8 @@ export async function runDeepSearch(runId: string): Promise<void> {
               targetKey: nbKey,
               type: nb.relationship as RelationType,
               weight: nb.strength,
-              confidence: 0.8,
-              evidence: nb.evidence ? [nb.evidence] : [],
+              confidence: v.confidence,
+              evidence: evidenceLine ? [evidenceLine] : [],
             }
             edges.set(eid, edge)
             touchedEdges.push(edge)
@@ -226,6 +275,151 @@ export async function runDeepSearch(runId: string): Promise<void> {
   }
 }
 
+/**
+ * 爬取模式播种：抓取起始网址(自动翻页) → 从每页真实正文抽取实体/关系 → 写入图谱(深度=1)。
+ * 抽取出的节点出处=对应页面 URL，可核验。完成后按"度"为节点赋相关性，便于后续挑重点深挖。
+ */
+async function seedFromCrawl(
+  runId: string,
+  seedUrl: string,
+  crawlPages: number | null,
+  nodes: Map<string, GraphNodeData>,
+  edges: Map<string, GraphEdgeData>,
+  config: SearchConfig,
+  log: (message: string, level?: string, meta?: any) => Promise<void>
+): Promise<void> {
+  const maxPages = Math.max(1, crawlPages || Number(process.env.CRAWL_MAX_PAGES) || 4)
+  await log(`① 抓取网页：从 ${seedUrl} 起，自动翻页最多 ${maxPages} 页${process.env.CRAWL_JS === '1' ? '（JS 渲染已开启）' : ''}`, 'step')
+
+  const pages = await crawlListing(seedUrl, {
+    maxPages,
+    onPage: async (url, idx, total) => {
+      await log(`抓取第 ${idx}/${total} 页：${url}`, 'llm')
+    },
+  })
+
+  if (!pages.length) {
+    await log('✗ 未抓取到任何可用页面内容', 'error')
+    return
+  }
+  await log(`✓ 共抓到 ${pages.length} 页真实内容，开始从正文抽取实体与关系…`, 'success')
+
+  let pageIdx = 0
+  for (const page of pages) {
+    pageIdx++
+    if (await isStopped(runId)) return
+
+    await prisma.graphRun.update({
+      where: { id: runId },
+      data: {
+        progress: Math.min(58, 5 + Math.round((pageIdx / pages.length) * 53)),
+        message: `解析第 ${pageIdx}/${pages.length} 页正文…(已发现 ${nodes.size} 节点)`,
+      },
+    })
+
+    let extraction
+    try {
+      extraction = await extractPageGraph(page.text, page.url, 22)
+    } catch (err) {
+      await log(`⚠ 第 ${pageIdx} 页抽取失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+      continue
+    }
+
+    const touchedNodes: GraphNodeData[] = []
+    const touchedEdges: GraphEdgeData[] = []
+    const newNames: string[] = []
+
+    const ensureNode = (name: string, type: any, evidence?: string): boolean => {
+      const key = canonicalKey(type, name)
+      if (nodes.has(key)) {
+        const ex = nodes.get(key)!
+        ex.discoveryCount += 1
+        touchedNodes.push(ex)
+        return true
+      }
+      if (nodes.size >= config.globalNodeCap) return false
+      const nd: GraphNodeData = {
+        key,
+        name,
+        type,
+        depth: 1,
+        relevanceScore: 0.5,
+        discoveryCount: 1,
+        year: null,
+        evidence: evidence || '',
+        sourceUrl: page.url,
+        degree: 0,
+        pagerank: 0,
+        importance: 0,
+      }
+      nodes.set(key, nd)
+      touchedNodes.push(nd)
+      newNames.push(name)
+      return true
+    }
+
+    for (const n of extraction.nodes) ensureNode(n.name, n.type, n.evidence)
+
+    for (const e of extraction.edges) {
+      const sKey = canonicalKey(e.sourceType, e.source)
+      const tKey = canonicalKey(e.targetType, e.target)
+      if (sKey === tKey) continue
+      if (!ensureNode(e.source, e.sourceType, e.evidence)) continue
+      if (!ensureNode(e.target, e.targetType, e.evidence)) continue
+
+      const evLine = e.evidence ? `${e.evidence} —— ${page.url}` : page.url
+      const eid = undirectedEdgeId(sKey, tKey, e.relationship)
+      const exEdge = edges.get(eid)
+      if (exEdge) {
+        exEdge.weight = Math.min(1, Math.max(exEdge.weight, e.strength) + 0.05)
+        exEdge.confidence = Math.min(1, exEdge.confidence + 0.05)
+        exEdge.evidence.push(evLine)
+        touchedEdges.push(exEdge)
+      } else {
+        const edge: GraphEdgeData = {
+          sourceKey: sKey,
+          targetKey: tKey,
+          type: e.relationship as RelationType,
+          weight: e.strength,
+          confidence: 0.7, // 有真实页面正文 + 出处作依据
+          evidence: [evLine],
+        }
+        edges.set(eid, edge)
+        touchedEdges.push(edge)
+      }
+    }
+
+    await persistNodes(runId, touchedNodes)
+    await persistEdges(runId, touchedEdges)
+    await prisma.graphRun.update({
+      where: { id: runId },
+      data: { nodeCount: nodes.size, edgeCount: edges.size },
+    })
+
+    const preview = newNames.slice(0, 6).join('、') + (newNames.length > 6 ? ` 等 ${newNames.length} 个` : '')
+    await log(
+      `第 ${pageIdx} 页：抽取 ${extraction.nodes.length} 实体 / ${extraction.edges.length} 关系${newNames.length ? `，新增节点：${preview}` : '（无新增）'}`,
+      'success'
+    )
+  }
+
+  // 按度为节点赋相关性(度越高=越像枢纽/越重要)，供后续深挖择优
+  const deg = new Map<string, number>()
+  for (const e of edges.values()) {
+    deg.set(e.sourceKey, (deg.get(e.sourceKey) || 0) + 1)
+    deg.set(e.targetKey, (deg.get(e.targetKey) || 0) + 1)
+  }
+  for (const n of nodes.values()) {
+    const d = deg.get(n.key) || 0
+    n.relevanceScore = Math.max(n.relevanceScore, Math.min(1, 0.4 + 0.08 * d))
+  }
+  await persistNodes(runId, Array.from(nodes.values()))
+  await log(`② 抽取完成：共 ${nodes.size} 个实体 / ${edges.size} 条关系（均来自真实页面正文，带出处）`, 'success')
+  if (config.maxDepth > 1) {
+    await log('③ 开始对度最高的重点实体，用真实资料继续向外深挖…', 'step')
+  }
+}
+
 async function isStopped(runId: string): Promise<boolean> {
   const r = await prisma.graphRun.findUnique({ where: { id: runId }, select: { status: true } })
   return r?.status === 'stopped'
@@ -243,7 +437,7 @@ async function persistNodes(runId: string, list: GraphNodeData[]): Promise<void>
       degree: n.degree,
       discoveryCount: n.discoveryCount,
       parentKey: n.parentKey ?? null,
-      data: JSON.stringify({ year: n.year ?? null, evidence: n.evidence ?? null }),
+      data: JSON.stringify({ year: n.year ?? null, evidence: n.evidence ?? null, sourceUrl: n.sourceUrl ?? null }),
     }
     await prisma.graphNode.upsert({
       where: { runId_key: { runId, key: n.key } },

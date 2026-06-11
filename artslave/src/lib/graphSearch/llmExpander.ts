@@ -1,7 +1,10 @@
-// LLM 扩展原语：给定实体 → 返回结构化的邻居+关系
-// 走 OpenAI 兼容接口(当前指向本地假 API → Codex)
+// LLM 扩展原语(取证式)：
+//   1) 先用 retriever 检索该实体的【真实资料】(默认维基百科)
+//   2) 再让 LLM 只从真实资料里抽取相关实体与关系，每条必须带依据 + 出处
+//   找不到真实资料就返回空(绝不让模型凭空编造)。
 
 import OpenAI from 'openai'
+import { retrieveContext, RetrievedDoc } from './retriever'
 import {
   Neighbor,
   ExpansionResult,
@@ -11,25 +14,37 @@ import {
   RELATION_TYPES,
 } from './types'
 
-function getClient(): OpenAI {
+const TYPE_LABELS: Record<string, string> = {
+  artist: '艺术家',
+  exhibition: '展览',
+  institution: '机构',
+  curator: '策展人',
+  movement: '流派',
+  location: '地点',
+  scholar: '学者',
+  paper: '论文',
+  venue: '会议/期刊',
+}
+
+export function getClient(): OpenAI {
   return new OpenAI({
     apiKey: process.env.OPENAI_API_KEY || 'fake-local-key',
     baseURL: process.env.OPENAI_BASE_URL || undefined,
-    timeout: 240000, // Codex 调用慢，给足超时
+    timeout: 240000,
   })
 }
 
 const SYSTEM_PROMPT =
-  '你是艺术史与学术领域的知识图谱专家。只输出严格的 JSON，不要任何多余文字或解释。优先给出真实、可核实的关系，避免编造。'
+  '你是知识图谱抽取专家。你只能依据用户提供的【真实资料】抽取实体与关系，' +
+  '严禁补充资料中没有出现的内容，严禁凭记忆编造。只输出严格的 JSON，不要任何多余文字。'
 
-function buildPrompt(name: string, type: string, maxNeighbors: number): string {
-  return `给定一个实体，列出与它直接相关、最重要的实体及关系，用于构建知识图谱。
-
-实体: ${name} (${type})
+function buildPrompt(name: string, type: string, maxNeighbors: number, context: string, docCount: number): string {
+  return `下面是关于实体「${name}」(${TYPE_LABELS[type] || type}) 的若干份真实资料(来自维基百科等可核验来源，已编号)。
+请【只依据这些资料】，抽取与「${name}」直接相关、且资料中确有依据的其它实体及关系，用于构建知识图谱。
 
 返回 JSON，结构如下:
 {
-  "canonical": "该实体的规范名(优先通用英文名，没有则用原名)",
+  "canonical": "「${name}」的规范名(优先通用英文名，没有则用原名)",
   "neighbors": [
     {
       "name": "邻居实体的规范名",
@@ -37,38 +52,42 @@ function buildPrompt(name: string, type: string, maxNeighbors: number): string {
       "relationship": "${RELATION_TYPES.join('|')}",
       "year": 相关年份(整数)或 null,
       "strength": 0到1之间的数字(关系的重要/紧密程度),
-      "evidence": "一句话依据"
+      "evidence": "资料中能支撑该关系的一句原文或紧凑依据",
+      "source": 该依据所在的资料编号(1 到 ${docCount} 的整数)
     }
   ]
 }
 
 规则:
 1. 最多返回 ${maxNeighbors} 个最重要的邻居，按 strength 从高到低。
-2. type 和 relationship 必须严格取自上面给定的枚举值。
-3. relationship 描述的是 "邻居 相对于 ${name}" 的关系。
-4. 只输出 JSON。`
+2. 只抽取资料中【确有依据】的关系；资料没有提到的实体或关系，绝对不要输出。
+3. type 和 relationship 必须严格取自上面给定的枚举值。
+4. relationship 描述的是 "邻居 相对于 ${name}" 的关系。
+5. evidence 必须能在对应编号的资料中找到依据；source 必须是该资料的编号。
+6. 只输出 JSON。
+
+=== 真实资料 ===
+${context}`
 }
 
-function normalizeType(t: string): NodeType | null {
+export function normalizeType(t: string): NodeType | null {
   const k = String(t || '').toLowerCase().trim()
   return (NODE_TYPES as string[]).includes(k) ? (k as NodeType) : null
 }
 
-function normalizeRelation(r: string): RelationType {
+export function normalizeRelation(r: string): RelationType {
   const k = String(r || '').toLowerCase().trim()
-  return (RELATION_TYPES as string[]).includes(k)
-    ? (k as RelationType)
-    : 'collaborated_with'
+  return (RELATION_TYPES as string[]).includes(k) ? (k as RelationType) : 'collaborated_with'
 }
 
-function clamp01(n: any, fallback = 0.5): number {
+export function clamp01(n: any, fallback = 0.5): number {
   const v = typeof n === 'number' ? n : parseFloat(n)
   if (Number.isNaN(v)) return fallback
   return Math.max(0, Math.min(1, v))
 }
 
 /** 从可能含围栏/多余文字的回复中提取 JSON 对象 */
-function extractJson(text: string): any {
+export function extractJson(text: string): any {
   try {
     return JSON.parse(text)
   } catch (_) {
@@ -90,37 +109,59 @@ function extractJson(text: string): any {
   return null
 }
 
+function buildContext(docs: RetrievedDoc[]): string {
+  return docs
+    .map((d, i) => `【资料${i + 1}】${d.title}\nURL: ${d.url}\n${d.text}`)
+    .join('\n\n----------\n\n')
+}
+
 export async function expandEntity(
   name: string,
   type: string,
   maxNeighbors: number
 ): Promise<ExpansionResult> {
+  // 1) 检索真实资料
+  const docs = await retrieveContext(name)
+  if (!docs.length) {
+    // 没有真实资料：宁可不扩展，也不编造
+    return { canonical: name, neighbors: [], docCount: 0, sources: [] }
+  }
+
+  const sources = docs.map((d) => ({ title: d.title, url: d.url }))
+  const context = buildContext(docs)
+
+  // 2) 让 LLM 只从真实资料抽取
   const client = getClient()
   const completion = await client.chat.completions.create({
     model: process.env.GRAPH_LLM_MODEL || 'deepseek-chat',
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: buildPrompt(name, type, maxNeighbors) },
+      { role: 'user', content: buildPrompt(name, type, maxNeighbors, context, docs.length) },
     ],
-    temperature: 0.2,
+    temperature: 0.1,
     response_format: { type: 'json_object' },
   })
 
   const raw = completion.choices?.[0]?.message?.content || ''
   const parsed = extractJson(raw)
   if (!parsed || !Array.isArray(parsed.neighbors)) {
-    return { canonical: name, neighbors: [] }
+    return { canonical: name, neighbors: [], docCount: docs.length, sources }
   }
 
   const neighbors: Neighbor[] = []
   for (const n of parsed.neighbors) {
     if (!n || !n.name) continue
     const nt = normalizeType(n.type)
-    if (!nt) continue // 类型无法识别就丢弃
+    if (!nt) continue
     const cleanName = String(n.name).trim()
     if (!cleanName) continue
-    // 避免邻居就是自己
     if (cleanName.toLowerCase() === name.toLowerCase()) continue
+
+    // 把 source 编号映射回真实出处 URL；无效编号则归到主资料(仍是真实检索来的)
+    const idx = Number.parseInt(n.source, 10)
+    const sourceUrl =
+      Number.isFinite(idx) && idx >= 1 && idx <= docs.length ? docs[idx - 1].url : docs[0].url
+
     neighbors.push({
       name: cleanName,
       type: nt,
@@ -128,14 +169,17 @@ export async function expandEntity(
       year: typeof n.year === 'number' ? n.year : null,
       strength: clamp01(n.strength, 0.5),
       evidence: typeof n.evidence === 'string' ? n.evidence.trim() : '',
+      sourceUrl,
     })
   }
 
-  // 按强度排序并截断
   neighbors.sort((a, b) => b.strength - a.strength)
 
   return {
-    canonical: typeof parsed.canonical === 'string' && parsed.canonical.trim() ? parsed.canonical.trim() : name,
+    canonical:
+      typeof parsed.canonical === 'string' && parsed.canonical.trim() ? parsed.canonical.trim() : name,
     neighbors: neighbors.slice(0, maxNeighbors),
+    docCount: docs.length,
+    sources,
   }
 }

@@ -39,12 +39,15 @@ export interface Neighbor {
   relationship: RelationType
   year: number | null
   strength: number // 0-1
-  evidence: string
+  evidence: string // 来自真实资料的原文/依据片段
+  sourceUrl?: string | null // 该关系的真实出处链接(可核验)
 }
 
 export interface ExpansionResult {
   canonical: string
   neighbors: Neighbor[]
+  docCount?: number // 本次命中的真实资料篇数
+  sources?: { title: string; url: string }[] // 本次使用的真实资料出处
 }
 
 // 内存中的图结构(引擎运行时用)
@@ -58,6 +61,7 @@ export interface GraphNodeData {
   parentKey?: string
   year?: number | null
   evidence?: string
+  sourceUrl?: string | null // 首次发现该节点时的真实出处
   // 以下为后处理计算
   degree: number
   pagerank: number

@@ -366,6 +366,8 @@ model GraphRun {
   id          String    @id @default(cuid())
   seedName    String // 种子实体名
   seedType    String // 种子类型: artist|exhibition|institution|curator|movement|location
+  seedUrl     String? // 爬取模式：起始网址(列表/目录页，自动翻页抓取真实内容)
+  crawlPages  Int? // 爬取模式：最多翻页页数
   status      String    @default("pending") // pending|running|completed|failed|stopped
   maxDepth    Int       @default(2)
   maxPerLevel Int       @default(8)

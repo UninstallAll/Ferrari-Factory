@@ -29,6 +29,7 @@ export async function GET(request: NextRequest) {
       runIds: Set<string>
       year: number | null
       evidence: string | null
+      sourceUrl: string | null
     }
     const nodeMap = new Map<string, Agg>()
     for (const r of nodeRows) {
@@ -46,6 +47,7 @@ export async function GET(request: NextRequest) {
           runIds: new Set([r.runId]),
           year: parsed?.year ?? null,
           evidence: parsed?.evidence ?? null,
+          sourceUrl: parsed?.sourceUrl ?? null,
         })
       } else {
         a.discoverySum += r.discoveryCount
@@ -56,7 +58,9 @@ export async function GET(request: NextRequest) {
           a.bestImportance = r.importance
           a.name = r.name
           if (parsed?.evidence) a.evidence = parsed.evidence
+          if (parsed?.sourceUrl) a.sourceUrl = parsed.sourceUrl
         }
+        if (a.sourceUrl == null && parsed?.sourceUrl) a.sourceUrl = parsed.sourceUrl
         if (a.year == null && parsed?.year != null) a.year = parsed.year
       }
     }
@@ -117,7 +121,7 @@ export async function GET(request: NextRequest) {
         pagerank: n.pagerank,
         degree: n.degree,
         discoveryCount: n.discoveryCount,
-        data: { year: a.year, evidence: a.evidence, runCount: a.runIds.size },
+        data: { year: a.year, evidence: a.evidence, sourceUrl: a.sourceUrl, runCount: a.runIds.size },
       }
     })
 
