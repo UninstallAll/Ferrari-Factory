@@ -1,10 +1,12 @@
 'use client'
 
 import { useState, useEffect, useRef, useMemo, useCallback, type MouseEvent as ReactMouseEvent, type Dispatch, type SetStateAction } from 'react'
-import ReactFlow, { Background, Controls, MiniMap, Node, Edge, MarkerType, Handle, Position, type NodeProps } from 'reactflow'
+import ReactFlow, { Background, Controls, MiniMap, Node, Edge, MarkerType, Handle, Position, useNodesState, useEdgesState, type NodeProps } from 'reactflow'
 import 'reactflow/dist/style.css'
+import { forceSimulation, forceManyBody, forceLink, forceCollide, forceX, forceY, type Simulation } from 'd3-force'
 import { Search, Play, Square, Loader2, ArrowLeft, Type, Link2, Upload, FileText, ImageIcon, X, Sparkles, History, Trash2, RefreshCw, Filter,
-  Palette, Building2, UserCheck, Waves, MapPin, GraduationCap, Newspaper, Frame, Circle, type LucideIcon } from 'lucide-react'
+  Palette, Building2, UserCheck, Waves, MapPin, GraduationCap, Newspaper, Frame, Circle,
+  Wand2, ChevronDown, Target, Network, LayoutGrid, GitBranch, Grid3x3, Atom, type LucideIcon } from 'lucide-react'
 
 interface ApiNode {
   key: string
@@ -16,7 +18,7 @@ interface ApiNode {
   pagerank: number
   degree: number
   discoveryCount: number
-  data: { year?: number | null; evidence?: string | null } | null
+  data: { year?: number | null; evidence?: string | null; runCount?: number } | null
 }
 interface ApiEdge {
   sourceKey: string
@@ -111,12 +113,38 @@ interface EntityNodeData {
   size: number
   color: string
   selected: boolean
+  related?: boolean
+  matched?: boolean
+  dim?: boolean
 }
 function EntityNode({ data }: NodeProps<EntityNodeData>) {
   const Icon = TYPE_ICONS[data.type] || Circle
   const s = data.size
+  const border = data.selected
+    ? '4px solid #facc15'
+    : data.matched
+      ? '4px solid #10b981'
+      : data.related
+        ? '3px solid #fbbf24'
+        : '2px solid rgba(255,255,255,0.9)'
+  const boxShadow = data.selected
+    ? '0 0 0 4px rgba(250,204,21,0.35), 0 2px 8px rgba(0,0,0,0.3)'
+    : data.matched
+      ? '0 0 0 4px rgba(16,185,129,0.4), 0 2px 8px rgba(0,0,0,0.3)'
+      : data.related
+        ? '0 0 0 3px rgba(251,191,36,0.25), 0 2px 8px rgba(0,0,0,0.25)'
+        : '0 2px 8px rgba(0,0,0,0.25)'
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: Math.max(s, 64) }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        width: Math.max(s, 64),
+        opacity: data.dim ? 0.2 : 1,
+        transition: 'opacity 0.2s',
+      }}
+    >
       <Handle type="target" position={Position.Top} style={{ opacity: 0, pointerEvents: 'none' }} />
       <div
         style={{
@@ -127,8 +155,8 @@ function EntityNode({ data }: NodeProps<EntityNodeData>) {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          border: data.selected ? '4px solid #facc15' : '2px solid rgba(255,255,255,0.9)',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+          border,
+          boxShadow,
         }}
       >
         <Icon size={Math.max(14, s * 0.46)} color="#fff" strokeWidth={2.2} />
@@ -176,6 +204,161 @@ function layout(nodes: ApiNode[]): Map<string, { x: number; y: number }> {
     })
   }
   return pos
+}
+
+// d3-force 模拟节点
+interface SimNode {
+  id: string
+  r: number
+  x: number
+  y: number
+  vx?: number
+  vy?: number
+  fx?: number | null
+  fy?: number | null
+  index?: number
+}
+
+// ---------- 图谱整理：多种布局方式 ----------
+type LayoutMode = 'concentric' | 'force' | 'type' | 'tree' | 'grid'
+const LAYOUT_OPTIONS: { id: LayoutMode; label: string; desc: string; icon: LucideIcon }[] = [
+  { id: 'concentric', label: '同心圆（按深度）', desc: '起点居中，逐层向外', icon: Target },
+  { id: 'force', label: '力导向（自动散开）', desc: '减少重叠、相关聚团', icon: Network },
+  { id: 'type', label: '按类别分组', desc: '同类实体聚成一簇', icon: LayoutGrid },
+  { id: 'tree', label: '层级（上下分层）', desc: '按深度横向分层', icon: GitBranch },
+  { id: 'grid', label: '网格（按重要度）', desc: '整齐网格排列', icon: Grid3x3 },
+]
+
+// 按类别分组：每个类别一簇，簇心排在大圆上，簇内小网格
+function layoutByType(nodes: ApiNode[]): Map<string, { x: number; y: number }> {
+  const pos = new Map<string, { x: number; y: number }>()
+  const byType = new Map<string, ApiNode[]>()
+  for (const n of nodes) {
+    if (!byType.has(n.type)) byType.set(n.type, [])
+    byType.get(n.type)!.push(n)
+  }
+  const types = Array.from(byType.keys())
+  const clusterRadius = 360 + types.length * 90
+  types.forEach((t, ti) => {
+    const ang = (2 * Math.PI * ti) / Math.max(types.length, 1) - Math.PI / 2
+    const cx = Math.cos(ang) * clusterRadius
+    const cy = Math.sin(ang) * clusterRadius
+    const list = byType.get(t)!.sort((a, b) => b.importance - a.importance)
+    const cols = Math.max(1, Math.ceil(Math.sqrt(list.length)))
+    const gap = 96
+    list.forEach((n, i) => {
+      const col = i % cols
+      const row = Math.floor(i / cols)
+      const rows = Math.ceil(list.length / cols)
+      pos.set(n.key, {
+        x: cx + (col - (cols - 1) / 2) * gap,
+        y: cy + (row - (rows - 1) / 2) * gap,
+      })
+    })
+  })
+  return pos
+}
+
+// 层级：按 depth 横向分层（上下排开）
+function layoutTree(nodes: ApiNode[]): Map<string, { x: number; y: number }> {
+  const pos = new Map<string, { x: number; y: number }>()
+  const byDepth = new Map<number, ApiNode[]>()
+  for (const n of nodes) {
+    if (!byDepth.has(n.depth)) byDepth.set(n.depth, [])
+    byDepth.get(n.depth)!.push(n)
+  }
+  const depths = Array.from(byDepth.keys()).sort((a, b) => a - b)
+  const gapX = 150
+  const gapY = 220
+  depths.forEach((d, di) => {
+    const list = byDepth.get(d)!.sort((a, b) => b.importance - a.importance)
+    list.forEach((n, i) => {
+      pos.set(n.key, { x: (i - (list.length - 1) / 2) * gapX, y: di * gapY })
+    })
+  })
+  return pos
+}
+
+// 网格：按重要度从大到小铺成方阵
+function layoutGrid(nodes: ApiNode[]): Map<string, { x: number; y: number }> {
+  const pos = new Map<string, { x: number; y: number }>()
+  const sorted = [...nodes].sort((a, b) => b.importance - a.importance)
+  const cols = Math.max(1, Math.ceil(Math.sqrt(sorted.length)))
+  const gapX = 160
+  const gapY = 130
+  sorted.forEach((n, i) => {
+    pos.set(n.key, { x: (i % cols) * gapX, y: Math.floor(i / cols) * gapY })
+  })
+  return pos
+}
+
+// 力导向：Fruchterman-Reingold 简化版，一次性迭代（点击时跑）
+function layoutForce(nodes: ApiNode[], edges: ApiEdge[]): Map<string, { x: number; y: number }> {
+  const init = layout(nodes)
+  const keys = nodes.map((n) => n.key)
+  const keySet = new Set(keys)
+  const P: Record<string, { x: number; y: number }> = {}
+  for (const n of nodes) {
+    const p = init.get(n.key) || { x: (Math.random() - 0.5) * 200, y: (Math.random() - 0.5) * 200 }
+    P[n.key] = { x: p.x || (Math.random() - 0.5) * 50, y: p.y || (Math.random() - 0.5) * 50 }
+  }
+  const links = edges.filter((e) => keySet.has(e.sourceKey) && keySet.has(e.targetKey))
+  const k = Math.max(120, Math.sqrt((keys.length * 90000) / Math.max(1, keys.length)) + 110)
+  let temp = k * 1.5
+  const iters = keys.length > 180 ? 160 : 260
+  for (let it = 0; it < iters; it++) {
+    const disp: Record<string, { x: number; y: number }> = {}
+    for (const id of keys) disp[id] = { x: 0, y: 0 }
+    for (let i = 0; i < keys.length; i++) {
+      for (let j = i + 1; j < keys.length; j++) {
+        const a = P[keys[i]]
+        const b = P[keys[j]]
+        let dx = a.x - b.x
+        let dy = a.y - b.y
+        let dist = Math.hypot(dx, dy) || 0.01
+        const rep = (k * k) / dist
+        const ux = dx / dist
+        const uy = dy / dist
+        disp[keys[i]].x += ux * rep
+        disp[keys[i]].y += uy * rep
+        disp[keys[j]].x -= ux * rep
+        disp[keys[j]].y -= uy * rep
+      }
+    }
+    for (const e of links) {
+      const a = P[e.sourceKey]
+      const b = P[e.targetKey]
+      let dx = a.x - b.x
+      let dy = a.y - b.y
+      let dist = Math.hypot(dx, dy) || 0.01
+      const att = (dist * dist) / k
+      const ux = dx / dist
+      const uy = dy / dist
+      disp[e.sourceKey].x -= ux * att
+      disp[e.sourceKey].y -= uy * att
+      disp[e.targetKey].x += ux * att
+      disp[e.targetKey].y += uy * att
+    }
+    for (const id of keys) {
+      const d = disp[id]
+      const len = Math.hypot(d.x, d.y) || 0.01
+      const lim = Math.min(len, temp)
+      P[id].x += (d.x / len) * lim
+      P[id].y += (d.y / len) * lim
+    }
+    temp = Math.max(temp * 0.96, k * 0.02)
+  }
+  const out = new Map<string, { x: number; y: number }>()
+  for (const id of keys) out.set(id, P[id])
+  return out
+}
+
+function computeLayout(mode: LayoutMode, nodes: ApiNode[], edges: ApiEdge[]): Map<string, { x: number; y: number }> {
+  if (mode === 'force') return layoutForce(nodes, edges)
+  if (mode === 'type') return layoutByType(nodes)
+  if (mode === 'tree') return layoutTree(nodes)
+  if (mode === 'grid') return layoutGrid(nodes)
+  return layout(nodes)
 }
 
 type InputMode = 'text' | 'url' | 'file'
@@ -234,6 +417,10 @@ export default function DeepSearchPage() {
   const [consoleOpen, setConsoleOpen] = useState(true)
   const logEndRef = useRef<HTMLDivElement | null>(null)
 
+  // 视图模式：单次运行 / 全局总图
+  const [viewMode, setViewMode] = useState<'run' | 'global'>('run')
+  const [globalStats, setGlobalStats] = useState<{ totalEntities: number; totalRelations: number; shownEntities: number; limited: boolean } | null>(null)
+
   // 右侧排行面板折叠
   const [rankOpen, setRankOpen] = useState(true)
 
@@ -243,7 +430,24 @@ export default function DeepSearchPage() {
   const [hiddenRelations, setHiddenRelations] = useState<Set<string>>(new Set())
   const [depthMax, setDepthMax] = useState(99)
   const [minImportance, setMinImportance] = useState(0)
-  const [nameQuery, setNameQuery] = useState('')
+  const [minRunCount, setMinRunCount] = useState(1)
+
+  // 统一搜索（高亮 + 联动排行，不隐藏节点）
+  const [searchQuery, setSearchQuery] = useState('')
+  // 仅显示选择项：开启时只保留搜索命中的节点，并自动重新排列(Finder 清理效果)
+  const [onlyMatched, setOnlyMatched] = useState(false)
+
+  // 图谱整理：布局方式 + 下拉菜单
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>('concentric')
+  const [showLayoutMenu, setShowLayoutMenu] = useState(false)
+  const rfInstanceRef = useRef<{ fitView: (opts?: { duration?: number; padding?: number }) => void } | null>(null)
+  const arrangeSigRef = useRef<string>('')
+
+  // Obsidian 式「灵动」物理布局(d3-force 持续模拟，节点自动归位)
+  const [livePhysics, setLivePhysics] = useState(true)
+  const simRef = useRef<Simulation<SimNode, undefined> | null>(null)
+  const simNodesRef = useRef<Map<string, SimNode>>(new Map())
+  const rfNodesPosRef = useRef<Map<string, { x: number; y: number }>>(new Map())
 
   const running = run?.status === 'running' || run?.status === 'pending'
 
@@ -285,9 +489,35 @@ export default function DeepSearchPage() {
   }, [])
   fetchHistoryRef.current = fetchHistory
 
+  // 加载全局总图(所有运行合并去重)
+  const loadGlobal = useCallback(async () => {
+    stopPolling()
+    setViewMode('global')
+    setShowHistory(false)
+    setSelected(null)
+    setRun(null)
+    setRunId(null)
+    setLogs([])
+    setConsoleOpen(false)
+    try {
+      const res = await fetch('/api/deep-search/global?limit=300')
+      const data = await res.json()
+      if (!data.success) {
+        setResolveError('加载全局图失败: ' + data.error)
+        return
+      }
+      setApiNodes(data.nodes)
+      setApiEdges(data.edges)
+      setGlobalStats(data.stats)
+    } catch (e) {
+      console.error(e)
+    }
+  }, [])
+
   // 加载某次历史运行 → 从库里读出节点/边渲染成图谱
   const loadRun = useCallback(async (id: string) => {
     stopPolling()
+    setViewMode('run')
     setShowHistory(false)
     setSelected(null)
     try {
@@ -390,6 +620,7 @@ export default function DeepSearchPage() {
       return
     }
     stopPolling()
+    setViewMode('run')
     setApiNodes([])
     setApiEdges([])
     setSelected(null)
@@ -455,17 +686,41 @@ export default function DeepSearchPage() {
     () => apiNodes.reduce((mx, n) => Math.max(mx, n.depth), 0),
     [apiNodes]
   )
+  const maxRunCount = useMemo(
+    () => apiNodes.reduce((mx, n) => Math.max(mx, n.data?.runCount ?? 1), 1),
+    [apiNodes]
+  )
 
-  const filteredNodes = useMemo(() => {
-    const q = nameQuery.trim().toLowerCase()
+  // 基础筛选(类别/深度/重要度/出现次数)
+  const baseFilteredNodes = useMemo(() => {
     return apiNodes.filter(
       (n) =>
         !hiddenTypes.has(n.type) &&
         n.depth <= depthMax &&
         n.importance >= minImportance &&
-        (q === '' || n.name.toLowerCase().includes(q))
+        (n.data?.runCount ?? 1) >= minRunCount
     )
-  }, [apiNodes, hiddenTypes, depthMax, minImportance, nameQuery])
+  }, [apiNodes, hiddenTypes, depthMax, minImportance, minRunCount])
+
+  // 搜索命中的节点（用于图谱高亮 + 排行联动）；空查询返回 null 表示不过滤
+  const matchedKeys = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return null
+    const s = new Set<string>()
+    for (const n of baseFilteredNodes) {
+      const label = (TYPE_LABELS[n.type] || '').toLowerCase()
+      if (n.name.toLowerCase().includes(q) || label.includes(q) || n.type.toLowerCase().includes(q)) {
+        s.add(n.key)
+      }
+    }
+    return s
+  }, [searchQuery, baseFilteredNodes])
+
+  // 「仅显示选择项」开启且有命中时，只保留命中的节点
+  const filteredNodes = useMemo(() => {
+    if (onlyMatched && matchedKeys) return baseFilteredNodes.filter((n) => matchedKeys.has(n.key))
+    return baseFilteredNodes
+  }, [baseFilteredNodes, onlyMatched, matchedKeys])
 
   const visibleKeys = useMemo(() => new Set(filteredNodes.map((n) => n.key)), [filteredNodes])
 
@@ -490,44 +745,191 @@ export default function DeepSearchPage() {
     setHiddenRelations(new Set())
     setDepthMax(99)
     setMinImportance(0)
-    setNameQuery('')
+    setMinRunCount(1)
   }
   const filterActive =
     hiddenTypes.size > 0 ||
     hiddenRelations.size > 0 ||
     minImportance > 0 ||
-    nameQuery.trim() !== '' ||
+    minRunCount > 1 ||
     depthMax < maxDepthPresent
+
+  // 选中后：它自己 + 直接相连的节点(用于聚焦高亮)
+  const relatedKeys = useMemo(() => {
+    if (!selected) return null
+    const s = new Set<string>([selected.key])
+    for (const e of filteredEdges) {
+      if (e.sourceKey === selected.key) s.add(e.targetKey)
+      else if (e.targetKey === selected.key) s.add(e.sourceKey)
+    }
+    return s
+  }, [selected, filteredEdges])
 
   const flowNodes: Node[] = useMemo(() => {
     const pos = layout(filteredNodes)
+    const searching = matchedKeys != null
+    const focusing = relatedKeys != null
     return filteredNodes.map((n) => {
       const size = 34 + n.importance * 66
       const color = TYPE_COLORS[n.type] || '#64748b'
+      const isSel = selected?.key === n.key
+      const inFocus = relatedKeys?.has(n.key) ?? false
+      const isMatch = matchedKeys?.has(n.key) ?? false
+      const dim = (searching && !isMatch) || (focusing && !inFocus)
       return {
         id: n.key,
         type: 'entity',
         position: pos.get(n.key) || { x: 0, y: 0 },
-        data: { name: n.name, type: n.type, size, color, selected: selected?.key === n.key },
+        data: {
+          name: n.name,
+          type: n.type,
+          size,
+          color,
+          selected: isSel,
+          matched: searching && isMatch && !isSel,
+          related: focusing && inFocus && !isSel && !(searching && isMatch),
+          dim,
+        },
       }
     })
-  }, [filteredNodes, selected])
+  }, [filteredNodes, selected, relatedKeys, matchedKeys])
 
+  // 简洁优雅的连线：默认极细浅灰、无箭头无文字；只有选中节点的相连边才加粗高亮 + 显示关系标签
   const flowEdges: Edge[] = useMemo(
     () =>
-      filteredEdges.map((e, i) => ({
-        id: `e${i}`,
-        source: e.sourceKey,
-        target: e.targetKey,
-        label: RELATION_LABELS[e.type] || e.type,
-        animated: false,
-        style: { strokeWidth: 1 + e.weight * 5, stroke: '#94a3b8' },
-        labelStyle: { fontSize: 9, fill: '#64748b' },
-        labelBgStyle: { fill: '#f8fafc' },
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#94a3b8' },
-      })),
-    [filteredEdges]
+      filteredEdges.map((e, i) => {
+        const incident = !!selected && (e.sourceKey === selected.key || e.targetKey === selected.key)
+        const bothMatch = !!matchedKeys && matchedKeys.has(e.sourceKey) && matchedKeys.has(e.targetKey)
+        const dim = (!!relatedKeys && !incident) || (!!matchedKeys && !bothMatch && !incident)
+        return {
+          id: `e${i}`,
+          source: e.sourceKey,
+          target: e.targetKey,
+          type: 'straight',
+          label: incident ? RELATION_LABELS[e.type] || e.type : undefined,
+          animated: incident,
+          style: {
+            strokeWidth: incident ? 2.5 : 1,
+            stroke: incident ? '#f59e0b' : '#cbd5e1',
+            opacity: incident ? 1 : dim ? 0.08 : 0.4,
+          },
+          labelStyle: { fontSize: 10, fill: '#b45309', fontWeight: 600 },
+          labelBgStyle: { fill: '#fffbeb', fillOpacity: 0.9 },
+          labelBgPadding: [4, 2] as [number, number],
+          labelBgBorderRadius: 4,
+          markerEnd: incident ? { type: MarkerType.ArrowClosed, color: '#f59e0b' } : undefined,
+          zIndex: incident ? 10 : 0,
+        }
+      }),
+    [filteredEdges, selected, relatedKeys, matchedKeys]
   )
+
+  // ReactFlow 内部受控状态(支持拖动)；高亮/筛选变化时合并样式但保留已拖动的位置
+  const [rfNodes, setRfNodes, onNodesChange] = useNodesState([])
+  const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState([])
+
+  // 样式/高亮变化时：重建节点对象但保留当前位置(物理模拟或拖动得到的位置)
+  useEffect(() => {
+    setRfNodes((prev) => {
+      const prevPos = new Map(prev.map((n) => [n.id, n.position]))
+      return flowNodes.map((n) => ({ ...n, position: prevPos.get(n.id) || n.position }))
+    })
+  }, [flowNodes, setRfNodes])
+
+  useEffect(() => {
+    setRfEdges(flowEdges)
+  }, [flowEdges, setRfEdges])
+
+  // 始终记录屏幕上每个节点的当前坐标(供物理模拟续接 / 切换时无缝衔接)
+  useEffect(() => {
+    rfNodesPosRef.current = new Map(rfNodes.map((n) => [n.id, n.position]))
+  }, [rfNodes])
+
+  // 当前图的结构签名(节点集合 + 边集合)；只有结构变化才重建模拟，避免选中/高亮触发重排
+  const graphSig = useMemo(
+    () =>
+      filteredNodes.map((n) => n.key).join(',') +
+      '||' +
+      filteredEdges.map((e) => e.sourceKey + '>' + e.targetKey).join(','),
+    [filteredNodes, filteredEdges]
+  )
+
+  // ---------- Obsidian 式持续力导向模拟 ----------
+  useEffect(() => {
+    simRef.current?.stop()
+    if (!livePhysics || filteredNodes.length === 0) {
+      simRef.current = null
+      return
+    }
+    const seed = layout(filteredNodes)
+    const screenPos = rfNodesPosRef.current
+    const prevSim = simNodesRef.current
+    const simNodes: SimNode[] = filteredNodes.map((n) => {
+      const here = screenPos.get(n.key) || prevSim.get(n.key) || seed.get(n.key)
+      return {
+        id: n.key,
+        r: (34 + n.importance * 66) / 2 + 30,
+        x: here?.x ?? (Math.random() - 0.5) * 600,
+        y: here?.y ?? (Math.random() - 0.5) * 600,
+        vx: 0,
+        vy: 0,
+      }
+    })
+    const map = new Map(simNodes.map((s) => [s.id, s]))
+    simNodesRef.current = map
+    const links = filteredEdges.map((e) => ({ source: e.sourceKey, target: e.targetKey }))
+
+    const sim = forceSimulation<SimNode>(simNodes)
+      .force('charge', forceManyBody<SimNode>().strength(-380).distanceMax(1100))
+      .force(
+        'link',
+        forceLink<SimNode, { source: string; target: string }>(links)
+          .id((d) => d.id)
+          .distance(150)
+          .strength(0.16)
+      )
+      .force('collide', forceCollide<SimNode>().radius((d) => d.r).strength(0.85).iterations(2))
+      .force('x', forceX(0).strength(0.04))
+      .force('y', forceY(0).strength(0.04))
+      .alpha(0.9)
+      .alphaDecay(0.02)
+      .velocityDecay(0.42)
+
+    sim.on('tick', () => {
+      setRfNodes((prev) =>
+        prev.map((n) => {
+          const s = map.get(n.id)
+          return s ? { ...n, position: { x: s.x ?? 0, y: s.y ?? 0 } } : n
+        })
+      )
+    })
+    // 稳定后自动居中一次
+    sim.on('end', () => {
+      rfInstanceRef.current?.fitView({ duration: 400, padding: 0.2 })
+    })
+    simRef.current = sim
+
+    return () => {
+      sim.stop()
+    }
+    // 仅依赖结构签名与开关；位置从 ref 读取以免每帧重建
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphSig, livePhysics])
+
+  // 「仅显示选择项」开启 + 非物理模式时：可见集合或布局变化 → 自动重新排列(Finder 清理效果)
+  useEffect(() => {
+    if (!onlyMatched) {
+      arrangeSigRef.current = ''
+      return
+    }
+    if (livePhysics) return
+    const sig = layoutMode + '|' + filteredNodes.map((n) => n.key).join(',')
+    if (sig === arrangeSigRef.current) return
+    arrangeSigRef.current = sig
+    const pos = computeLayout(layoutMode, filteredNodes, filteredEdges)
+    setRfNodes((prev) => prev.map((n) => ({ ...n, position: pos.get(n.id) || n.position })))
+    setTimeout(() => rfInstanceRef.current?.fitView({ duration: 500, padding: 0.2 }), 60)
+  }, [onlyMatched, livePhysics, layoutMode, filteredNodes, filteredEdges, setRfNodes])
 
   const onNodeClick = useCallback(
     (_: any, node: Node) => {
@@ -536,7 +938,53 @@ export default function DeepSearchPage() {
     [apiNodes]
   )
 
+  // 拖动节点：物理模式下钉住并升温，松手后释放让其自然回落(Obsidian 手感)
+  const onNodeDragStart = useCallback((_: any, node: Node) => {
+    if (!livePhysics) return
+    const s = simNodesRef.current.get(node.id)
+    if (s) { s.fx = node.position.x; s.fy = node.position.y }
+    simRef.current?.alphaTarget(0.3).restart()
+  }, [livePhysics])
+  const onNodeDrag = useCallback((_: any, node: Node) => {
+    if (!livePhysics) return
+    const s = simNodesRef.current.get(node.id)
+    if (s) { s.fx = node.position.x; s.fy = node.position.y }
+  }, [livePhysics])
+  const onNodeDragStop = useCallback((_: any, node: Node) => {
+    if (!livePhysics) return
+    const s = simNodesRef.current.get(node.id)
+    if (s) { s.fx = null; s.fy = null }
+    simRef.current?.alphaTarget(0)
+  }, [livePhysics])
+
+  // 切换「灵动」物理布局
+  const toggleLivePhysics = useCallback(() => {
+    setLivePhysics((v) => {
+      if (!v) setShowLayoutMenu(false)
+      return !v
+    })
+  }, [])
+
   const ranked = useMemo(() => [...filteredNodes].sort((a, b) => b.importance - a.importance), [filteredNodes])
+  // 搜索时排行榜只显示命中项
+  const rankedShown = useMemo(
+    () => (matchedKeys ? ranked.filter((n) => matchedKeys.has(n.key)) : ranked),
+    [ranked, matchedKeys]
+  )
+
+  // 点击「整理图谱」→ 暂停物理、用所选静态布局重排当前可见节点，并自适应居中
+  const applyLayout = useCallback(
+    (mode: LayoutMode) => {
+      setLayoutMode(mode)
+      setShowLayoutMenu(false)
+      setLivePhysics(false)
+      simRef.current?.stop()
+      const pos = computeLayout(mode, filteredNodes, filteredEdges)
+      setRfNodes((prev) => prev.map((n) => ({ ...n, position: pos.get(n.id) || n.position })))
+      setTimeout(() => rfInstanceRef.current?.fitView({ duration: 600, padding: 0.2 }), 60)
+    },
+    [filteredNodes, filteredEdges, setRfNodes]
+  )
 
   return (
     <div className="h-screen overflow-hidden bg-slate-100 flex flex-col">
@@ -548,58 +996,6 @@ export default function DeepSearchPage() {
           </button>
           <Search className="w-5 h-5 text-slate-900" />
           <h1 className="text-lg font-bold text-slate-900">深度搜索 · 知识图谱</h1>
-        </div>
-        <div className="flex items-center gap-4">
-          {run && (
-            <div className="text-sm text-slate-600">
-              {run.nodeCount} 节点 · {run.edgeCount} 关系
-            </div>
-          )}
-          {/* 历史运行(数据库) */}
-          <div className="relative">
-            <button
-              onClick={() => { setShowHistory((v) => !v); fetchHistory() }}
-              className="flex items-center gap-1.5 text-sm text-slate-700 hover:text-slate-900 border-2 border-slate-200 rounded-xl px-3 py-1.5"
-            >
-              <History className="w-4 h-4" /> 历史 ({history.length})
-            </button>
-            {showHistory && (
-              <div className="absolute right-0 top-full mt-2 w-96 max-h-[70vh] overflow-y-auto bg-white border-2 border-slate-200 rounded-2xl shadow-xl z-20">
-                <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 sticky top-0 bg-white">
-                  <span className="text-xs font-bold text-slate-700">数据库中的运行记录</span>
-                  <button onClick={() => fetchHistory()} className="text-slate-400 hover:text-slate-900">
-                    <RefreshCw className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                {history.length === 0 && <p className="px-4 py-6 text-xs text-slate-400 text-center">还没有运行记录</p>}
-                {history.map((h) => (
-                  <div
-                    key={h.id}
-                    onClick={() => loadRun(h.id)}
-                    className={`flex items-center gap-2 px-4 py-2.5 cursor-pointer hover:bg-slate-50 border-b border-slate-50 ${
-                      h.id === runId ? 'bg-slate-50' : ''
-                    }`}
-                  >
-                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: TYPE_COLORS[h.seedType] || '#64748b' }} />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-slate-800 truncate font-medium">{h.seedName}</div>
-                      <div className="text-[11px] text-slate-400">
-                        {TYPE_LABELS[h.seedType] || h.seedType} · {h.nodeCount}节点/{h.edgeCount}边 · {new Date(h.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                      </div>
-                    </div>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${
-                      h.status === 'completed' ? 'bg-emerald-50 text-emerald-600'
-                      : h.status === 'running' || h.status === 'pending' ? 'bg-blue-50 text-blue-600'
-                      : h.status === 'failed' ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'
-                    }`}>{h.status}</span>
-                    <button onClick={(e) => deleteRun(h.id, e)} className="text-slate-300 hover:text-red-500 shrink-0">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
       </header>
 
@@ -743,6 +1139,81 @@ export default function DeepSearchPage() {
         </div>
       </div>
 
+      {/* 视图切换 + 历史(从顶栏移下，更显眼) */}
+      <div className="bg-slate-50 border-b-2 border-slate-200 px-6 py-3 flex items-center gap-4">
+        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">视图</span>
+        <div className="flex items-center bg-white border-2 border-slate-300 rounded-xl p-1 shadow-sm">
+          <button
+            onClick={() => {
+              if (viewMode !== 'run') {
+                setViewMode('run')
+                setSelected(null)
+                if (!run) { setApiNodes([]); setApiEdges([]) }
+              }
+            }}
+            className={`flex items-center gap-1.5 px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              viewMode === 'run' ? 'bg-slate-900 text-white shadow' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Search className="w-4 h-4" /> 单次
+          </button>
+          <button
+            onClick={loadGlobal}
+            className={`flex items-center gap-1.5 px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              viewMode === 'global' ? 'bg-slate-900 text-white shadow' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Network className="w-4 h-4" /> 全局总图
+          </button>
+        </div>
+
+        {/* 历史运行(数据库) */}
+        <div className="relative ml-auto">
+          <button
+            onClick={() => { setShowHistory((v) => !v); fetchHistory() }}
+            className="flex items-center gap-1.5 text-sm font-medium text-slate-700 hover:text-slate-900 bg-white border-2 border-slate-300 rounded-xl px-4 py-2 shadow-sm"
+          >
+            <History className="w-4 h-4" /> 历史 ({history.length})
+          </button>
+          {showHistory && (
+            <div className="absolute right-0 top-full mt-2 w-96 max-h-[70vh] overflow-y-auto bg-white border-2 border-slate-200 rounded-2xl shadow-xl z-20">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 sticky top-0 bg-white">
+                <span className="text-xs font-bold text-slate-700">数据库中的运行记录</span>
+                <button onClick={() => fetchHistory()} className="text-slate-400 hover:text-slate-900">
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              {history.length === 0 && <p className="px-4 py-6 text-xs text-slate-400 text-center">还没有运行记录</p>}
+              {history.map((h) => (
+                <div
+                  key={h.id}
+                  onClick={() => loadRun(h.id)}
+                  className={`flex items-center gap-2 px-4 py-2.5 cursor-pointer hover:bg-slate-50 border-b border-slate-50 ${
+                    h.id === runId ? 'bg-slate-50' : ''
+                  }`}
+                >
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: TYPE_COLORS[h.seedType] || '#64748b' }} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-slate-800 truncate font-medium">{h.seedName}</div>
+                    <div className="text-[11px] text-slate-400">
+                      {TYPE_LABELS[h.seedType] || h.seedType} · {h.nodeCount}节点/{h.edgeCount}边 · {new Date(h.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${
+                    h.status === 'completed' ? 'bg-emerald-50 text-emerald-600'
+                    : h.status === 'running' || h.status === 'pending' ? 'bg-blue-50 text-blue-600'
+                    : h.status === 'failed' ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'
+                  }`}>{h.status}</span>
+                  <button onClick={(e) => deleteRun(h.id, e)} className="text-slate-300 hover:text-red-500 shrink-0">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* 进度条 */}
       {run && (
         <div className="bg-white border-b border-slate-200 px-6 py-2">
@@ -785,17 +1256,6 @@ export default function DeepSearchPage() {
               <div className="text-xs text-slate-500">
                 显示 <b className="text-slate-900">{filteredNodes.length}</b> / {apiNodes.length} 节点 ·{' '}
                 <b className="text-slate-900">{filteredEdges.length}</b> / {apiEdges.length} 关系
-              </div>
-
-              {/* 名字搜索 */}
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">按名字</label>
-                <input
-                  value={nameQuery}
-                  onChange={(e) => setNameQuery(e.target.value)}
-                  placeholder="输入关键字过滤…"
-                  className="w-full border-2 border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-900"
-                />
               </div>
 
               {/* 类型图例(像地图图层开关) */}
@@ -891,6 +1351,25 @@ export default function DeepSearchPage() {
                   className="w-full"
                 />
               </div>
+
+              {/* 出现次数(仅全局总图，多次搜索反复印证=高可信) */}
+              {maxRunCount > 1 && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                    至少出现在 {minRunCount} 次搜索中
+                    {minRunCount > 1 && <span className="text-emerald-600"> · 高可信</span>}
+                  </label>
+                  <input
+                    type="range"
+                    min={1}
+                    max={maxRunCount}
+                    value={Math.min(minRunCount, maxRunCount)}
+                    onChange={(e) => setMinRunCount(+e.target.value)}
+                    className="w-full"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">被多次独立搜索反复发现的实体更可靠</p>
+                </div>
+              )}
             </div>
           </aside>
         ) : (
@@ -906,11 +1385,60 @@ export default function DeepSearchPage() {
         )}
 
         <div className="flex-1 relative">
-          <ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} onNodeClick={onNodeClick} fitView minZoom={0.1}>
-            <Background color="#cbd5e1" gap={20} />
+          <ReactFlow nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onNodeClick={onNodeClick} onNodeDragStart={onNodeDragStart} onNodeDrag={onNodeDrag} onNodeDragStop={onNodeDragStop} onPaneClick={() => { setSelected(null); setShowLayoutMenu(false) }} onInit={(inst) => { rfInstanceRef.current = inst }} fitView minZoom={0.1}>
+            <Background color="#e2e8f0" gap={26} size={1.5} />
             <Controls />
             <MiniMap nodeColor={(n) => ((n.data as EntityNodeData)?.color) || '#64748b'} pannable zoomable />
           </ReactFlow>
+
+          {/* 浮动工具栏(左上)：灵动开关 + 整理图谱 */}
+          {filteredNodes.length > 0 && (
+            <div className="absolute top-3 left-3 z-10 flex items-center gap-2">
+              <button
+                onClick={toggleLivePhysics}
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-medium border-2 shadow-sm transition-colors ${
+                  livePhysics
+                    ? 'bg-emerald-500 border-emerald-500 text-white hover:bg-emerald-600'
+                    : 'bg-white/95 backdrop-blur border-slate-200 text-slate-700 hover:border-slate-900'
+                }`}
+                title={livePhysics ? '灵动布局开启中：节点自动归位，点击关闭' : '开启灵动布局：节点自动散开归位（Obsidian 效果）'}
+              >
+                <Atom className={`w-4 h-4 ${livePhysics ? 'animate-spin [animation-duration:4s]' : ''}`} />
+                灵动 {livePhysics ? '开' : '关'}
+              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setShowLayoutMenu((v) => !v)}
+                  className="flex items-center gap-1.5 bg-white/95 backdrop-blur border-2 border-slate-200 rounded-xl px-3 py-1.5 text-sm font-medium text-slate-700 hover:border-slate-900 shadow-sm"
+                  title="用固定布局重新整理图谱(会暂停灵动)"
+                >
+                  <Wand2 className="w-4 h-4" /> 整理图谱
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showLayoutMenu ? 'rotate-180' : ''}`} />
+                </button>
+                {showLayoutMenu && (
+                  <div className="absolute left-0 top-full mt-1.5 w-60 bg-white border-2 border-slate-200 rounded-xl shadow-xl overflow-hidden">
+                    {LAYOUT_OPTIONS.map(({ id, label, desc, icon: Icon }) => (
+                      <button
+                        key={id}
+                        onClick={() => applyLayout(id)}
+                        className={`w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-slate-50 border-b border-slate-50 last:border-0 ${
+                          layoutMode === id ? 'bg-slate-50' : ''
+                        }`}
+                      >
+                        <span className={`mt-0.5 w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${layoutMode === id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                          <Icon className="w-4 h-4" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium text-slate-800">{label}</span>
+                          <span className="block text-[11px] text-slate-400">{desc}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           {apiNodes.length === 0 && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-slate-400">
               输入一个起点（艺术家 / 展览 / 学者…），点击「开始搜索」
@@ -928,11 +1456,67 @@ export default function DeepSearchPage() {
         {rankOpen ? (
           <aside className="w-80 bg-white border-l-2 border-slate-200 shrink-0 flex flex-col min-h-0">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
-              <span className="text-sm font-bold text-slate-900">重要度排行 ({ranked.length})</span>
+              <span className="text-sm font-bold text-slate-900">重要度排行 ({rankedShown.length})</span>
               <button onClick={() => setRankOpen(false)} className="text-slate-400 hover:text-slate-900" title="收起">
                 <X className="w-4 h-4" />
               </button>
             </div>
+
+            {/* 统一搜索：高亮图谱 + 联动排行 */}
+            <div className="px-4 py-2.5 border-b border-slate-100 shrink-0">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="搜索并高亮节点 / 类别…"
+                  className="w-full border-2 border-slate-200 rounded-lg pl-8 pr-7 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-900"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-900"
+                    title="清空"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              {matchedKeys && (
+                <p className="text-[11px] mt-1.5 text-slate-500">
+                  {matchedKeys.size > 0 ? (
+                    <>图中高亮 <b className="text-emerald-600">{matchedKeys.size}</b> 个匹配{onlyMatched ? '，仅显示这些' : '，其余已淡化'}</>
+                  ) : (
+                    <span className="text-slate-400">没有匹配的节点</span>
+                  )}
+                </p>
+              )}
+
+              {/* 仅显示选择项开关：开启则只保留命中节点并自动重新排列 */}
+              <div className="mt-2 flex items-center justify-between">
+                <span className={`text-xs ${matchedKeys ? 'text-slate-700' : 'text-slate-400'}`}>
+                  仅显示选择项
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={onlyMatched}
+                  disabled={!matchedKeys}
+                  onClick={() => setOnlyMatched((v) => !v)}
+                  className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+                    onlyMatched ? 'bg-emerald-500' : 'bg-slate-300'
+                  } ${!matchedKeys ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                  title={matchedKeys ? '只保留搜索命中的节点，并重新排列' : '先在上方搜索以选择节点'}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                      onlyMatched ? 'translate-x-4' : ''
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
             <div className="flex-1 overflow-y-auto min-h-0">
               {selected && (
                 <div className="p-4 border-b-2 border-slate-200">
@@ -950,6 +1534,9 @@ export default function DeepSearchPage() {
                     <div>发现次数: <b className="text-slate-900">{selected.discoveryCount}</b></div>
                     <div>深度: <b className="text-slate-900">{selected.depth}</b></div>
                     {selected.data?.year && <div>年份: <b className="text-slate-900">{selected.data.year}</b></div>}
+                    {viewMode === 'global' && selected.data?.runCount != null && (
+                      <div>出现搜索数: <b className="text-slate-900">{selected.data.runCount}</b></div>
+                    )}
                   </div>
                   {selected.data?.evidence && (
                     <p className="text-xs text-slate-500 mt-3 leading-relaxed">{selected.data.evidence}</p>
@@ -958,7 +1545,7 @@ export default function DeepSearchPage() {
               )}
               <div className="p-3">
                 <div className="space-y-1">
-                  {ranked.map((n, i) => {
+                  {rankedShown.map((n, i) => {
                     const I = TYPE_ICONS[n.type] || Circle
                     return (
                       <button
@@ -977,7 +1564,9 @@ export default function DeepSearchPage() {
                       </button>
                     )
                   })}
-                  {ranked.length === 0 && <p className="text-xs text-slate-400 px-2 py-3">暂无数据</p>}
+                  {rankedShown.length === 0 && (
+                    <p className="text-xs text-slate-400 px-2 py-3">{matchedKeys ? '没有匹配的节点' : '暂无数据'}</p>
+                  )}
                 </div>
               </div>
             </div>
