@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTheme } from '@/contexts/ThemeContext'
+import AppHeader from '@/components/AppHeader'
 import {
-  ArrowLeft,
   Play,
   Pause,
   Square,
@@ -187,65 +187,39 @@ export default function WorkflowPage() {
 
   return (
     <div className={`min-h-screen ${themeClasses.background}`}>
-      {/* Header */}
-      <header className={`${themeClasses.cardBackground} shadow-sm border-b-2 ${themeClasses.border}`}>
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Button
-                variant="ghost"
-                onClick={() => window.history.back()}
-                className={`${themeClasses.button} rounded-2xl`}
-              >
-                <ArrowLeft className="w-5 h-5 mr-2" />
-                返回
-              </Button>
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-emerald-600 rounded-2xl flex items-center justify-center">
-                  <Workflow className="w-6 h-6 text-white" />
-                </div>
-                <h1 className={`text-2xl font-bold ${themeClasses.textPrimary}`}>
-                  投递工作流管理
-                </h1>
-              </div>
+      <AppHeader
+        titleKey="pages.workflow.title"
+        subtitleKey="pages.workflow.subtitle"
+        icon={Workflow}
+        iconClassName="bg-emerald-600"
+        right={
+          <>
+            <div className={`flex items-center space-x-2 px-4 py-2 rounded-2xl border-2 ${
+              n8nStatus === 'connected'
+                ? 'bg-green-100 text-green-800 border-green-200'
+                : 'bg-red-100 text-red-800 border-red-200'
+            }`}>
+              <div className={`w-2 h-2 rounded-full ${n8nStatus === 'connected' ? 'bg-green-500' : 'bg-red-500'}`} />
+              <span className="text-sm font-medium">n8n {n8nStatus === 'connected' ? '已连接' : '未连接'}</span>
             </div>
-            <div className="flex items-center space-x-4">
-              <div className={`flex items-center space-x-2 px-4 py-2 rounded-2xl border-2 ${
-                n8nStatus === 'connected' 
-                  ? 'bg-green-100 text-green-800 border-green-200' 
-                  : 'bg-red-100 text-red-800 border-red-200'
-              }`}>
-                <div className={`w-2 h-2 rounded-full ${
-                  n8nStatus === 'connected' ? 'bg-green-500' : 'bg-red-500'
-                }`} />
-                <span className="text-sm font-medium">
-                  n8n {n8nStatus === 'connected' ? '已连接' : '未连接'}
-                </span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Button
-                  onClick={() => setAutoRefresh(!autoRefresh)}
-                  variant={autoRefresh ? "default" : "outline"}
-                  className={`${themeClasses.button} rounded-2xl`}
-                >
-                  <Activity className={`w-4 h-4 mr-2 ${autoRefresh ? 'animate-pulse' : ''}`} />
-                  {autoRefresh ? '自动刷新' : '手动模式'}
-                </Button>
-                <Button
-                  onClick={() => {
-                    checkN8nStatus()
-                    loadMonitorData()
-                  }}
-                  className={`${themeClasses.button} rounded-2xl`}
-                >
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                  刷新状态
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </header>
+            <Button
+              onClick={() => setAutoRefresh(!autoRefresh)}
+              variant={autoRefresh ? 'default' : 'outline'}
+              className={`${themeClasses.button} rounded-2xl`}
+            >
+              <Activity className={`w-4 h-4 mr-2 ${autoRefresh ? 'animate-pulse' : ''}`} />
+              {autoRefresh ? '自动刷新' : '手动模式'}
+            </Button>
+            <Button
+              onClick={() => { checkN8nStatus(); loadMonitorData() }}
+              className={`${themeClasses.button} rounded-2xl`}
+            >
+              <RefreshCw className="w-4 h-4 mr-2" />
+              刷新状态
+            </Button>
+          </>
+        }
+      />
 
       <main className="max-w-7xl mx-auto px-6 py-8">
         {/* n8n 连接状态 */}

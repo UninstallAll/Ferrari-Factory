@@ -2,7 +2,8 @@
 
 import React, { useState } from 'react';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
-import { Search, Filter, Download, Maximize2, Settings } from 'lucide-react';
+import { Search, Filter, Download, Maximize2, Settings, Network } from 'lucide-react';
+import AppHeader from '@/components/AppHeader';
 
 export default function GraphPage() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -37,16 +38,12 @@ export default function GraphPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* 顶部工具栏 */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-bold text-gray-900">知识图谱</h1>
-            <div className="text-sm text-gray-500">
-              探索艺术世界的关联网络
-            </div>
-          </div>
-          
+      <AppHeader
+        titleKey="pages.graph.title"
+        subtitleKey="pages.graph.subtitle"
+        icon={Network}
+        iconClassName="bg-indigo-600"
+        right={
           <div className="flex items-center gap-3">
             {/* 搜索框 */}
             <div className="relative">
@@ -99,11 +96,13 @@ export default function GraphPage() {
               <Maximize2 className="w-4 h-4" />
             </button>
           </div>
-        </div>
+        }
+      />
 
+      <div className="px-6 py-4">
         {/* 过滤器面板 */}
         {showFilters && (
-          <div className="mt-4 p-4 bg-gray-50 rounded-lg border">
+          <div className="mb-4 p-4 bg-gray-50 rounded-lg border">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">

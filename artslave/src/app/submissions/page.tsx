@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useTheme } from '@/contexts/ThemeContext'
-import ThemeSelector from '@/components/ThemeSelector'
+import AppHeader from '@/components/AppHeader'
 import { 
   Search,
   Filter,
@@ -14,7 +14,6 @@ import {
   Star,
   Award,
   Globe,
-  ArrowLeft,
   ExternalLink,
   Heart,
   Share2,
@@ -137,44 +136,25 @@ export default function SubmissionsPage() {
 
   return (
     <div className={`min-h-screen ${themeClasses.background}`}>
-      {/* Header */}
-      <header className={`${themeClasses.cardBackground} border-b-2 ${themeClasses.border}`}>
-        <div className="max-w-7xl mx-auto px-4 py-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => window.location.href = '/'}
-                className={`p-2 ${themeClasses.cardBackground} border-2 ${themeClasses.border} ${themeClasses.buttonHover} rounded-lg transition-all duration-200`}
-                title="返回主页"
-              >
-                <ArrowLeft className={`w-4 h-4 ${themeClasses.textPrimary}`} />
-              </Button>
-              <div className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                  <Eye className="w-4 h-4 text-white" />
-                </div>
-                <div>
-                  <h1 className={`text-lg font-bold ${themeClasses.textPrimary}`}>投稿信息展示</h1>
-                  <p className={`text-xs ${themeClasses.textSecondary}`}>发现适合您的艺术机会</p>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center space-x-2">
-              <ThemeSelector />
-              <Button variant="outline" size="sm" className={`rounded-lg border-2 ${themeClasses.border} ${themeClasses.buttonHover} transition-all duration-200 ${themeClasses.textPrimary}`}>
-                <Heart className="w-3 h-3 mr-1" />
-                收藏
-              </Button>
-              <Button variant="outline" size="sm" className={`rounded-lg border-2 ${themeClasses.border} ${themeClasses.buttonHover} transition-all duration-200 ${themeClasses.textPrimary}`}>
-                <Share2 className="w-3 h-3 mr-1" />
-                分享
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
+      <AppHeader
+        titleKey="pages.submissions.title"
+        subtitleKey="pages.submissions.subtitle"
+        icon={Eye}
+        iconClassName="bg-blue-600"
+        compact
+        right={
+          <>
+            <Button variant="outline" size="sm" className={`rounded-lg border-2 ${themeClasses.border} ${themeClasses.buttonHover} transition-all duration-200 ${themeClasses.textPrimary}`}>
+              <Heart className="w-3 h-3 mr-1" />
+              收藏
+            </Button>
+            <Button variant="outline" size="sm" className={`rounded-lg border-2 ${themeClasses.border} ${themeClasses.buttonHover} transition-all duration-200 ${themeClasses.textPrimary}`}>
+              <Share2 className="w-3 h-3 mr-1" />
+              分享
+            </Button>
+          </>
+        }
+      />
 
       {/* Featured Categories */}
       <div className="bg-white border-b-2 border-black">

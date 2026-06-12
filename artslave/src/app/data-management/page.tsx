@@ -25,7 +25,7 @@ import {
   Bot,
   Zap
 } from 'lucide-react'
-import ThemeSelector from '@/components/ThemeSelector'
+import AppHeader from '@/components/AppHeader'
 import SubmissionForm from '@/components/SubmissionForm'
 import { getDatabaseAPI } from '@/lib/database'
 import type { SubmissionData } from '@/lib/database'
@@ -288,32 +288,13 @@ export default function DataManagementPage() {
 
   return (
     <div className={`min-h-screen ${themeClasses.background}`}>
-      {/* Header */}
-      <div className={`${themeClasses.cardBackground} border-b-2 ${themeClasses.border} sticky top-0 z-10`}>
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <div className="w-12 h-12 bg-purple-600 rounded-2xl flex items-center justify-center">
-                <Database className="w-6 h-6 text-white" />
-              </div>
-              <div>
-                <h1 className={`text-2xl font-bold ${themeClasses.textPrimary}`}>数据库管理</h1>
-                <p className={`text-sm ${themeClasses.textSecondary}`}>管理投稿信息数据</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-3">
-              <ThemeSelector />
-              <Button 
-                variant="outline" 
-                className={`rounded-2xl border-2 ${themeClasses.border} ${themeClasses.buttonHover} transition-all duration-200`}
-                onClick={() => window.location.href = '/'}
-                title="返回主页"
-              >
-                返回主页
-              </Button>
-            </div>
-          </div>
-        </div>
+      <div className="sticky top-0 z-10">
+        <AppHeader
+          titleKey="pages.dataManagement.title"
+          subtitleKey="pages.dataManagement.subtitle"
+          icon={Database}
+          iconClassName="bg-purple-600"
+        />
       </div>
 
       {/* Main Content */}

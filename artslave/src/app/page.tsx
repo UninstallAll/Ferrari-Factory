@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useTheme } from '@/contexts/ThemeContext'
-import ThemeSelector from '@/components/ThemeSelector'
+import AppHeader from '@/components/AppHeader'
 import ChatBox from '@/components/ChatBox'
 import {
   FileText,
@@ -42,27 +42,19 @@ export default function Home() {
   if (!supabase) {
     return (
       <div className={`min-h-screen ${themeClasses.background}`}>
-        <header className={`${themeClasses.cardBackground} shadow-sm border-b-2 ${themeClasses.border}`}>
-          <div className="max-w-7xl mx-auto px-6 py-4">
-            <div className="flex justify-between items-center">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-black rounded-2xl flex items-center justify-center">
-                  <Sparkles className="w-6 h-6 text-white" />
-                </div>
-                <h1 className={`text-2xl font-bold ${themeClasses.textPrimary}`}>
-                Ferrari Factory
-                </h1>
-              </div>
-              <div className="flex items-center space-x-4">
-                <ThemeSelector />
-                <div className="bg-amber-100 text-amber-800 px-4 py-2 rounded-2xl text-sm font-medium">
-                  <AlertTriangle className="w-4 h-4 inline mr-2" />
-                  开发模式
-                </div>
-              </div>
+        <AppHeader
+          titleKey="pages.home.title"
+          subtitleKey="pages.home.subtitle"
+          icon={Sparkles}
+          iconClassName="bg-black"
+          showBack={false}
+          right={
+            <div className="bg-amber-100 text-amber-800 px-4 py-2 rounded-2xl text-sm font-medium">
+              <AlertTriangle className="w-4 h-4 inline mr-2" />
+              开发模式
             </div>
-          </div>
-        </header>
+          }
+        />
 
         <main className="max-w-6xl mx-auto px-6 py-8">
           {/* AI 对话测试窗口 */}
@@ -317,32 +309,27 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-black rounded-2xl flex items-center justify-center">
-                <Sparkles className="w-6 h-6 text-white" />
-              </div>
-              <h1 className="text-2xl font-bold text-gray-900">
-                ArtSlave
-              </h1>
-            </div>
-            <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-600 bg-gray-100 px-4 py-2 rounded-2xl">
-                欢迎，{user.email}
-              </span>
-              <Button
-                variant="outline"
-                onClick={() => signOut()}
-                className="border-gray-300 text-gray-700 hover:bg-gray-50 rounded-2xl"
-              >
-                退出登录
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
+      <AppHeader
+        titleKey="pages.home.title"
+        subtitleKey="pages.home.subtitle"
+        icon={Sparkles}
+        iconClassName="bg-black"
+        showBack={false}
+        right={
+          <>
+            <span className="text-sm text-gray-600 bg-gray-100 px-4 py-2 rounded-2xl">
+              欢迎，{user.email}
+            </span>
+            <Button
+              variant="outline"
+              onClick={() => signOut()}
+              className="border-gray-300 text-gray-700 hover:bg-gray-50 rounded-2xl"
+            >
+              退出登录
+            </Button>
+          </>
+        }
+      />
 
       <main className="max-w-7xl mx-auto px-6 py-8">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

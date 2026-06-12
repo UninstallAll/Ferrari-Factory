@@ -4,9 +4,11 @@ import { useState, useEffect, useRef, useMemo, useCallback, type MouseEvent as R
 import ReactFlow, { Background, Controls, MiniMap, Node, Edge, MarkerType, Handle, Position, useNodesState, useEdgesState, useViewport, type NodeProps } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { forceSimulation, forceManyBody, forceLink, forceCollide, forceX, forceY, type Simulation } from 'd3-force'
-import { Search, Play, Square, Loader2, ArrowLeft, Type, Link2, Upload, FileText, ImageIcon, X, Sparkles, History, Trash2, RefreshCw, Filter,
+import { Search, Play, Square, Loader2, Type, Link2, Upload, FileText, ImageIcon, X, Sparkles, History, Trash2, RefreshCw, Filter,
   Palette, Building2, UserCheck, Waves, MapPin, GraduationCap, Newspaper, Frame, Circle,
   Wand2, ChevronDown, Target, Network, LayoutGrid, GitBranch, Grid3x3, Atom, Maximize2, type LucideIcon } from 'lucide-react'
+import AppHeader from '@/components/AppHeader'
+import { useLocale } from '@/contexts/LocaleContext'
 
 interface ApiNode {
   key: string
@@ -417,6 +419,19 @@ function computeLayout(mode: LayoutMode, nodes: ApiNode[], edges: ApiEdge[], siz
 }
 
 type InputMode = 'text' | 'url' | 'file'
+
+function detectInputMode(seedInput: string, file: File | null): InputMode {
+  if (file) return 'file'
+  if (/^https?:\/\/\S+/i.test(seedInput.trim())) return 'url'
+  return 'text'
+}
+
+const INPUT_MODE_LABELS: Record<InputMode, { zh: string; en: string }> = {
+  text: { zh: '文本', en: 'Text' },
+  url: { zh: '链接', en: 'URL' },
+  file: { zh: '文件', en: 'File' },
+}
+
 interface ResolvedSeed {
   seedName: string
   seedType: string
@@ -439,16 +454,18 @@ function readFile(file: File): Promise<{ dataUrl: string; text: string }> {
 }
 
 export default function DeepSearchPage() {
+  const { t, locale } = useLocale()
   const [seedType, setSeedType] = useState('artist')
   const [maxDepth, setMaxDepth] = useState(2)
   const [maxPerLevel, setMaxPerLevel] = useState(6)
   const [crawlPages, setCrawlPages] = useState(4) // 链接模式：自动翻页页数
 
-  // 多模态起点输入
-  const [inputMode, setInputMode] = useState<InputMode>('text')
-  const [textValue, setTextValue] = useState('巴勃罗·毕加索')
-  const [urlValue, setUrlValue] = useState('')
+  // 多模态起点输入（自动检测 + 可手动覆盖）
+  const [seedInput, setSeedInput] = useState('巴勃罗·毕加索')
+  const [inputModeOverride, setInputModeOverride] = useState<InputMode | null>(null)
   const [file, setFile] = useState<File | null>(null)
+  const autoInputMode = detectInputMode(seedInput, file)
+  const inputMode = inputModeOverride ?? autoInputMode
   const [dragOver, setDragOver] = useState(false)
   const [resolving, setResolving] = useState(false)
   const [resolveError, setResolveError] = useState<string | null>(null)
@@ -485,6 +502,7 @@ export default function DeepSearchPage() {
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set())
   const [hiddenRelations, setHiddenRelations] = useState<Set<string>>(new Set())
   const [depthMax, setDepthMax] = useState(99)
+  const [depthFilterSliderMax, setDepthFilterSliderMax] = useState(10)
   const [minImportance, setMinImportance] = useState(0)
   const [minRunCount, setMinRunCount] = useState(1)
 
@@ -622,13 +640,13 @@ export default function DeepSearchPage() {
   // 构造解析请求体 + 当前输入签名(用于判断是否需要重新解析)
   const buildResolvePayload = async (): Promise<{ payload: any; sig: string }> => {
     if (inputMode === 'text') {
-      const t = textValue.trim()
-      if (!t) throw new Error('请输入起点名字或描述')
-      return { payload: { kind: 'text', text: t }, sig: `text:${t}` }
+      const text = seedInput.trim()
+      if (!text) throw new Error(locale === 'zh' ? '请输入起点名字或描述' : 'Please enter a seed name or description')
+      return { payload: { kind: 'text', text }, sig: `text:${text}` }
     }
     if (inputMode === 'url') {
-      const u = urlValue.trim()
-      if (!/^https?:\/\//i.test(u)) throw new Error('请输入有效的 http(s) 链接')
+      const u = seedInput.trim()
+      if (!/^https?:\/\//i.test(u)) throw new Error(locale === 'zh' ? '请输入有效的 http(s) 链接' : 'Please enter a valid http(s) URL')
       return { payload: { kind: 'url', url: u }, sig: `url:${u}` }
     }
     if (!file) throw new Error('请上传一个文件(图片 / PDF / 文本)')
@@ -678,9 +696,9 @@ export default function DeepSearchPage() {
   const start = async () => {
     // 链接模式 → 爬取式深度搜索：抓取该网址(自动翻页) → 批量抽取实体 → 深挖
     if (inputMode === 'url') {
-      const u = urlValue.trim()
+      const u = seedInput.trim()
       if (!/^https?:\/\//i.test(u)) {
-        setResolveError('请输入有效的 http(s) 链接')
+        setResolveError(locale === 'zh' ? '请输入有效的 http(s) 链接' : 'Please enter a valid http(s) URL')
         return
       }
       setResolveError(null)
@@ -749,9 +767,17 @@ export default function DeepSearchPage() {
 
   const pickFile = (f: File | null) => {
     setFile(f)
+    setInputModeOverride(null)
     setResolvedSeed(null)
     lastSigRef.current = ''
     setResolveError(null)
+  }
+
+  const onSeedInputChange = (value: string) => {
+    setSeedInput(value)
+    setInputModeOverride(null)
+    setResolvedSeed(null)
+    lastSigRef.current = ''
   }
 
   const stop = async () => {
@@ -788,6 +814,10 @@ export default function DeepSearchPage() {
   const maxDepthPresent = useMemo(
     () => apiNodes.reduce((mx, n) => Math.max(mx, n.depth), 0),
     [apiNodes]
+  )
+  const depthSliderCap = useMemo(
+    () => Math.max(depthFilterSliderMax, maxDepthPresent, 1),
+    [depthFilterSliderMax, maxDepthPresent]
   )
   const maxRunCount = useMemo(
     () => apiNodes.reduce((mx, n) => Math.max(mx, n.data?.runCount ?? 1), 1),
@@ -855,7 +885,7 @@ export default function DeepSearchPage() {
     hiddenRelations.size > 0 ||
     minImportance > 0 ||
     minRunCount > 1 ||
-    depthMax < maxDepthPresent
+    depthMax < depthSliderCap
 
   // 选中后：它自己 + 直接相连的节点(用于聚焦高亮)
   const relatedKeys = useMemo(() => {
@@ -937,9 +967,9 @@ export default function DeepSearchPage() {
           label: incident ? RELATION_LABELS[e.type] || e.type : undefined,
           animated: incident,
           style: {
-            strokeWidth: incident ? 2.5 : 1,
-            stroke: incident ? '#f59e0b' : '#cbd5e1',
-            opacity: incident ? 1 : dim ? 0.08 : 0.4,
+            strokeWidth: incident ? 4 : 2.5,
+            stroke: incident ? '#f59e0b' : '#94a3b8',
+            opacity: incident ? 1 : dim ? 0.12 : 0.65,
           },
           labelStyle: { fontSize: 10, fill: '#b45309', fontWeight: 600 },
           labelBgStyle: { fill: '#fffbeb', fillOpacity: 0.9 },
@@ -1132,31 +1162,38 @@ export default function DeepSearchPage() {
 
   return (
     <div className="h-screen overflow-hidden bg-slate-100 flex flex-col">
-      {/* 顶栏 */}
-      <header className="bg-white border-b-2 border-slate-200 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={() => (window.location.href = '/')} className="text-slate-500 hover:text-slate-900">
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <Search className="w-5 h-5 text-slate-900" />
-          <h1 className="text-lg font-bold text-slate-900">深度搜索 · 知识图谱</h1>
-        </div>
-      </header>
+      <AppHeader
+        titleKey="pages.deepSearch.title"
+        subtitleKey="pages.deepSearch.subtitle"
+        icon={Search}
+        compact
+        showTheme={false}
+      />
 
       {/* 控制栏 */}
       <div className="bg-white border-b border-slate-200 px-6 py-3 space-y-3">
         {/* 起点输入：文本 / 链接 / 文件 */}
         <div className="flex flex-wrap items-start gap-3">
-          <div className="flex-1 min-w-[320px]">
-            <div className="flex items-center gap-1 mb-2">
+          <div
+            className="flex-1 min-w-[320px]"
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault()
+              setDragOver(false)
+              const f = e.dataTransfer.files?.[0]
+              if (f) pickFile(f)
+            }}
+          >
+            <div className="flex items-center gap-1 mb-2 flex-wrap">
               {([
-                { id: 'text', label: '文本', icon: Type },
-                { id: 'url', label: '链接', icon: Link2 },
-                { id: 'file', label: '文件', icon: Upload },
+                { id: 'text', label: t('deepSearch.inputText'), icon: Type },
+                { id: 'url', label: t('deepSearch.inputUrl'), icon: Link2 },
+                { id: 'file', label: t('deepSearch.inputFile'), icon: Upload },
               ] as const).map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
-                  onClick={() => { setInputMode(id); setResolveError(null); setResolvedSeed(null); lastSigRef.current = '' }}
+                  onClick={() => { setInputModeOverride(id); setResolveError(null); setResolvedSeed(null); lastSigRef.current = '' }}
                   className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
                     inputMode === id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
@@ -1164,43 +1201,42 @@ export default function DeepSearchPage() {
                   <Icon className="w-3.5 h-3.5" /> {label}
                 </button>
               ))}
-              <span className="text-[11px] text-slate-400 ml-1">起点实体（自动识别名字与类型）</span>
+              <span className="flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 ml-1">
+                <Sparkles className="w-3 h-3" />
+                {t('deepSearch.autoDetect')}: {INPUT_MODE_LABELS[autoInputMode][locale]}
+                {inputModeOverride && inputModeOverride !== autoInputMode && (
+                  <span className="text-slate-400">→ {INPUT_MODE_LABELS[inputMode][locale]}</span>
+                )}
+              </span>
+              <span className="text-[11px] text-slate-400">{t('deepSearch.seedHint')}</span>
             </div>
 
-            {inputMode === 'text' && (
+            {inputMode !== 'file' && (
               <input
-                value={textValue}
-                onChange={(e) => { setTextValue(e.target.value); setResolvedSeed(null); lastSigRef.current = '' }}
+                value={seedInput}
+                onChange={(e) => onSeedInputChange(e.target.value)}
                 className="w-full border-2 border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-900"
-                placeholder="名字或一句描述，如：巴勃罗·毕加索 / 第59届威尼斯双年展"
+                placeholder={t('deepSearch.placeholder')}
               />
             )}
 
             {inputMode === 'url' && (
-              <div className="space-y-2">
-                <input
-                  value={urlValue}
-                  onChange={(e) => { setUrlValue(e.target.value); setResolvedSeed(null); lastSigRef.current = '' }}
-                  className="w-full border-2 border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-900"
-                  placeholder="粘贴列表/目录页或内容页，如 https://art-action.org/site/en/cat/index.php?page=1"
-                />
-                <div className="flex items-center gap-2 flex-wrap text-xs">
-                  <span className="flex items-center gap-1 text-sky-700 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5">
-                    <Link2 className="w-3 h-3" /> 爬取模式
-                  </span>
-                  <span className="text-slate-500">自动翻页抓取真实正文 → 批量抽取实体 → 重点实体继续深挖</span>
-                  <label className="flex items-center gap-1.5 text-slate-600 ml-1">
-                    翻页数
-                    <input
-                      type="number"
-                      min={1}
-                      max={20}
-                      value={crawlPages}
-                      onChange={(e) => setCrawlPages(Math.min(20, Math.max(1, parseInt(e.target.value) || 1)))}
-                      className="w-16 border-2 border-slate-300 rounded-lg px-2 py-1 text-slate-900 focus:outline-none focus:border-slate-900"
-                    />
-                  </label>
-                </div>
+              <div className="flex items-center gap-2 flex-wrap text-xs mt-2">
+                <span className="flex items-center gap-1 text-sky-700 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5">
+                  <Link2 className="w-3 h-3" /> {t('deepSearch.crawlMode')}
+                </span>
+                <span className="text-slate-500">{t('deepSearch.crawlDesc')}</span>
+                <label className="flex items-center gap-1.5 text-slate-600 ml-1">
+                  {t('deepSearch.crawlPages')}
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={crawlPages}
+                    onChange={(e) => setCrawlPages(Math.min(20, Math.max(1, parseInt(e.target.value) || 1)))}
+                    className="w-16 border-2 border-slate-300 rounded-lg px-2 py-1 text-slate-900 focus:outline-none focus:border-slate-900"
+                  />
+                </label>
               </div>
             )}
 
@@ -1235,7 +1271,7 @@ export default function DeepSearchPage() {
                 ) : (
                   <>
                     <Upload className="w-5 h-5 text-slate-400 shrink-0" />
-                    <span className="text-slate-400">拖拽或点击上传：图片(海报/作品/截图) · PDF · txt/md</span>
+                    <span className="text-slate-400">{t('deepSearch.uploadHint')}</span>
                   </>
                 )}
               </div>
@@ -1245,7 +1281,7 @@ export default function DeepSearchPage() {
             {resolvedSeed && !resolveError && (
               <div className="mt-2 flex items-center gap-2 flex-wrap text-xs">
                 <span className="flex items-center gap-1 text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">
-                  <Sparkles className="w-3 h-3" /> 识别为
+                  <Sparkles className="w-3 h-3" /> {t('deepSearch.resolvedAs')}
                 </span>
                 <b className="text-slate-900">{resolvedSeed.seedName}</b>
                 <span className="w-2 h-2 rounded-full" style={{ background: TYPE_COLORS[resolvedSeed.seedType] || '#64748b' }} />
@@ -1263,7 +1299,7 @@ export default function DeepSearchPage() {
         <div className="flex flex-wrap items-end gap-3">
           {inputMode !== 'url' && (
             <div>
-              <label className="block text-xs text-slate-500 mb-1">类型{resolvedSeed ? '（可改）' : ''}</label>
+              <label className="block text-xs text-slate-500 mb-1">{t('deepSearch.type')}{resolvedSeed ? t('deepSearch.typeEditable') : ''}</label>
               <select
                 value={seedType}
                 onChange={(e) => setSeedType(e.target.value)}
@@ -1278,7 +1314,7 @@ export default function DeepSearchPage() {
             </div>
           )}
           <div>
-            <label className="block text-xs text-slate-500 mb-1">深度 {maxDepth}</label>
+            <label className="block text-xs text-slate-500 mb-1">{t('deepSearch.depth')} {maxDepth}</label>
             <div className="flex items-center gap-2">
               <input
                 type="range"
@@ -1302,7 +1338,7 @@ export default function DeepSearchPage() {
             </div>
           </div>
           <div>
-            <label className="block text-xs text-slate-500 mb-1">每层扩展 {maxPerLevel}</label>
+            <label className="block text-xs text-slate-500 mb-1">{t('deepSearch.perLevel')} {maxPerLevel}</label>
             <div className="flex items-center gap-2">
               <input
                 type="range"
@@ -1331,14 +1367,14 @@ export default function DeepSearchPage() {
               disabled={resolving}
               className="bg-slate-900 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl px-5 py-2 text-sm font-medium flex items-center gap-2"
             >
-              {resolving ? <><Loader2 className="w-4 h-4 animate-spin" /> 解析起点…</> : <><Play className="w-4 h-4" /> 开始搜索</>}
+              {resolving ? <><Loader2 className="w-4 h-4 animate-spin" /> {t('deepSearch.resolving')}</> : <><Play className="w-4 h-4" /> {t('deepSearch.start')}</>}
             </button>
           ) : (
             <button
               onClick={stop}
               className="bg-red-600 hover:bg-red-700 text-white rounded-xl px-5 py-2 text-sm font-medium flex items-center gap-2"
             >
-              <Square className="w-4 h-4" /> 停止
+              <Square className="w-4 h-4" /> {t('deepSearch.stop')}
             </button>
           )}
         </div>
@@ -1528,17 +1564,35 @@ export default function DeepSearchPage() {
               {/* 深度 */}
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1.5">
-                  显示深度 ≤ {Math.min(depthMax, Math.max(maxDepthPresent, 1))}
-                  {depthMax >= maxDepthPresent && <span className="text-slate-400"> (全部)</span>}
+                  {t('deepSearch.showDepth')} {Math.min(depthMax, depthSliderCap)}
+                  {depthMax >= depthSliderCap && <span className="text-slate-400"> {t('deepSearch.depthAll')}</span>}
                 </label>
                 <input
                   type="range"
                   min={0}
-                  max={Math.max(maxDepthPresent, 1)}
-                  value={Math.min(depthMax, Math.max(maxDepthPresent, 1))}
+                  max={depthSliderCap}
+                  value={Math.min(depthMax, depthSliderCap)}
                   onChange={(e) => setDepthMax(+e.target.value)}
                   className="w-full"
                 />
+                <div className="flex items-center gap-2 mt-1.5">
+                  <span className="text-[11px] text-slate-500 shrink-0">{t('deepSearch.depthSliderMax')}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={99}
+                    value={depthFilterSliderMax}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10)
+                      if (!Number.isNaN(v)) {
+                        const cap = clampInt(v, 1, 99)
+                        setDepthFilterSliderMax(cap)
+                        if (depthMax > cap) setDepthMax(cap)
+                      }
+                    }}
+                    className="w-14 border-2 border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 text-center focus:outline-none focus:border-slate-900"
+                  />
+                </div>
               </div>
 
               {/* 重要度阈值 */}

@@ -4,9 +4,8 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useTheme } from '@/contexts/ThemeContext'
-import ThemeSelector from '@/components/ThemeSelector'
+import AppHeader from '@/components/AppHeader'
 import { 
-  ArrowLeft,
   User,
   Mail,
   Phone,
@@ -53,42 +52,21 @@ export default function ProfilePage() {
 
   return (
     <div className={`min-h-screen ${themeClasses.background}`}>
-      {/* Header */}
-      <header className={`${themeClasses.cardBackground} border-b-2 ${themeClasses.border}`}>
-        <div className="max-w-6xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Button
-                variant="outline"
-                onClick={() => window.location.href = '/'}
-                className={`p-3 ${themeClasses.cardBackground} border-2 ${themeClasses.border} ${themeClasses.buttonHover} rounded-xl transition-all duration-200`}
-                title="返回主页"
-              >
-                <ArrowLeft className={`w-5 h-5 ${themeClasses.textPrimary}`} />
-              </Button>
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-purple-600 rounded-xl flex items-center justify-center">
-                  <User className="w-6 h-6 text-white" />
-                </div>
-                <div>
-                  <h1 className={`text-2xl font-bold ${themeClasses.textPrimary}`}>我的资料</h1>
-                  <p className={`text-sm ${themeClasses.textSecondary}`}>管理个人信息和作品集</p>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center space-x-3">
-              <ThemeSelector />
-              <Button 
-                onClick={() => setIsEditing(!isEditing)}
-                className={`${themeClasses.button} rounded-2xl px-6 transition-all duration-200`}
-              >
-                {isEditing ? <Save className="w-4 h-4 mr-2" /> : <Edit className="w-4 h-4 mr-2" />}
-                {isEditing ? '保存' : '编辑'}
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
+      <AppHeader
+        titleKey="pages.profile.title"
+        subtitleKey="pages.profile.subtitle"
+        icon={User}
+        iconClassName="bg-purple-600"
+        right={
+          <Button
+            onClick={() => setIsEditing(!isEditing)}
+            className={`${themeClasses.button} rounded-2xl px-6 transition-all duration-200`}
+          >
+            {isEditing ? <Save className="w-4 h-4 mr-2" /> : <Edit className="w-4 h-4 mr-2" />}
+            {isEditing ? '保存' : '编辑'}
+          </Button>
+        }
+      />
 
       <div className="max-w-6xl mx-auto px-6 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
