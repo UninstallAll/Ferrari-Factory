@@ -8,8 +8,8 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const seedUrl = String(body.seedUrl || '').trim()
-    const maxDepth = Math.min(Math.max(parseInt(body.maxDepth) || 2, 1), 4)
-    const maxPerLevel = Math.min(Math.max(parseInt(body.maxPerLevel) || 6, 1), 15)
+    const maxDepth = Math.min(Math.max(parseInt(body.maxDepth) || 2, 1), 10)
+    const maxPerLevel = Math.min(Math.max(parseInt(body.maxPerLevel) || 6, 1), 10)
 
     // 爬取模式：给定网址 → 自动翻页抓取真实正文 → 批量抽取实体 → 深挖
     if (seedUrl) {

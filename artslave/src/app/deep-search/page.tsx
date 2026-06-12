@@ -107,6 +107,10 @@ const LOG_LEVEL_STYLE: Record<string, { tag: string; cls: string }> = {
 }
 
 // 按屏幕像素推算默认节点倍率(节点数越多、画布越小 → 倍率越小)
+function clampInt(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
+
 function computeDefaultNodeSizeScale(width: number, height: number, nodeCount: number): number {
   if (nodeCount <= 0 || width <= 0 || height <= 0) return 1
   const minDim = Math.min(width, height)
@@ -490,7 +494,7 @@ export default function DeepSearchPage() {
   const [onlyMatched, setOnlyMatched] = useState(false)
 
   // 图谱整理：布局方式 + 下拉菜单
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>('concentric')
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>('force')
   const [showLayoutMenu, setShowLayoutMenu] = useState(false)
   const rfInstanceRef = useRef<{
     fitView: (opts?: { duration?: number; padding?: number }) => void
@@ -887,7 +891,9 @@ export default function DeepSearchPage() {
   }, [defaultNodeSizeScale, filteredNodes.length])
 
   const flowNodes: Node[] = useMemo(() => {
-    const pos = layout(filteredNodes)
+    const pos = livePhysics
+      ? layout(filteredNodes)
+      : computeLayout(layoutMode, filteredNodes, filteredEdges, nodeSizeScale)
     const searching = matchedKeys != null
     const focusing = relatedKeys != null
     return filteredNodes.map((n) => {
@@ -914,7 +920,7 @@ export default function DeepSearchPage() {
         },
       }
     })
-  }, [filteredNodes, selected, relatedKeys, matchedKeys, nodeSizeScale, viewportZoom])
+  }, [filteredNodes, filteredEdges, selected, relatedKeys, matchedKeys, nodeSizeScale, viewportZoom, layoutMode, livePhysics])
 
   // 简洁优雅的连线：默认极细浅灰、无箭头无文字；只有选中节点的相连边才加粗高亮 + 显示关系标签
   const flowEdges: Edge[] = useMemo(
@@ -1273,11 +1279,51 @@ export default function DeepSearchPage() {
           )}
           <div>
             <label className="block text-xs text-slate-500 mb-1">深度 {maxDepth}</label>
-            <input type="range" min={1} max={3} value={maxDepth} onChange={(e) => setMaxDepth(+e.target.value)} className="w-24" />
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={1}
+                max={10}
+                value={maxDepth}
+                onChange={(e) => setMaxDepth(+e.target.value)}
+                className="w-24"
+              />
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={maxDepth}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10)
+                  if (!Number.isNaN(v)) setMaxDepth(clampInt(v, 1, 10))
+                }}
+                className="w-14 border-2 border-slate-300 rounded-lg px-2 py-1 text-sm text-slate-900 text-center focus:outline-none focus:border-slate-900"
+              />
+            </div>
           </div>
           <div>
             <label className="block text-xs text-slate-500 mb-1">每层扩展 {maxPerLevel}</label>
-            <input type="range" min={2} max={12} value={maxPerLevel} onChange={(e) => setMaxPerLevel(+e.target.value)} className="w-24" />
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={1}
+                max={10}
+                value={maxPerLevel}
+                onChange={(e) => setMaxPerLevel(+e.target.value)}
+                className="w-24"
+              />
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={maxPerLevel}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10)
+                  if (!Number.isNaN(v)) setMaxPerLevel(clampInt(v, 1, 10))
+                }}
+                className="w-14 border-2 border-slate-300 rounded-lg px-2 py-1 text-sm text-slate-900 text-center focus:outline-none focus:border-slate-900"
+              />
+            </div>
           </div>
           {!running ? (
             <button

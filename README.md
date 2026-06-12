@@ -33,6 +33,33 @@ npm run dev
 
 Visit `http://localhost:3000` to see the application.
 
+### 本地开发：启动后台服务
+
+完整本地开发需要同时运行以下三个后台程序，每个命令在**独立的终端窗口**中执行：
+
+```bash
+cd artslave
+npm run dev
+```
+
+```bash
+cd artslave
+npm run n8n:start
+```
+
+```bash
+cd artslave
+npm run fake-llm:cli
+```
+
+| 服务 | 命令 | 访问地址 | 说明 |
+|------|------|----------|------|
+| Next.js 开发服务器 | `npm run dev` | http://localhost:3000 | 主应用前端与 API |
+| n8n 工作流引擎 | `npm run n8n:start` | http://localhost:5678 | 自动化数据采集与工作流 |
+| 本地 LLM 代理 | `npm run fake-llm:cli` | http://localhost:8787/v1 | 通过本地 Codex/Claude CLI 处理 LLM 请求 |
+
+使用 `fake-llm:cli` 时，请在 `artslave/.env` 中将 `OPENAI_BASE_URL` 或 `DEEPSEEK_BASE_URL` 指向 `http://localhost:8787/v1`。
+
 ## 🧪 Testing
 
 We maintain **100% test coverage** with comprehensive testing:
@@ -84,6 +111,7 @@ npm run test         # Run test suite
 npm run lint         # Run ESLint
 npm run setup-data   # Initialize database
 npm run n8n:start    # Start n8n workflow engine
+npm run fake-llm:cli # Start local LLM proxy (Codex/Claude CLI mode)
 ```
 
 ## 🔧 Recent Major Fixes & Improvements

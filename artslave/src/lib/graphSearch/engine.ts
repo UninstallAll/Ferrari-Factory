@@ -291,6 +291,21 @@ async function seedFromCrawl(
   const maxPages = Math.max(1, crawlPages || Number(process.env.CRAWL_MAX_PAGES) || 4)
   await log(`① 抓取网页：从 ${seedUrl} 起，自动翻页最多 ${maxPages} 页${process.env.CRAWL_JS === '1' ? '（JS 渲染已开启）' : ''}`, 'step')
 
+  // 预检：抓取成功后但抽取开始前，先确认 LLM 可达，否则立刻报明确错误
+  const llmBaseUrl = (process.env.OPENAI_BASE_URL || 'https://api.openai.com').replace(/\/$/, '')
+  try {
+    await fetch(`${llmBaseUrl}/models`, {
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY || 'x'}` },
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch {
+    const isLocal = llmBaseUrl.includes('localhost') || llmBaseUrl.includes('127.0.0.1')
+    const hint = isLocal
+      ? `LLM 服务未就绪（${llmBaseUrl}）—— 请在另一个终端先运行: npm run fake-llm:cli`
+      : `无法连接 LLM 服务（${llmBaseUrl}）—— 请检查网络和 OPENAI_BASE_URL / OPENAI_API_KEY 配置`
+    throw new Error(hint)
+  }
+
   const pages = await crawlListing(seedUrl, {
     maxPages,
     onPage: async (url, idx, total) => {
