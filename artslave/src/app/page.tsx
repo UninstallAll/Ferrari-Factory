@@ -21,8 +21,9 @@ import {
   Users,
   Workflow,
   Zap,
-  Network
+  Network,
 } from 'lucide-react'
+
 
 export default function Home() {
   const { user, loading, signOut } = useAuthContext()

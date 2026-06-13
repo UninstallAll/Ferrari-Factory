@@ -463,8 +463,22 @@ type InputMode = 'text' | 'url' | 'file'
 
 function detectInputMode(seedInput: string, file: File | null): InputMode {
   if (file) return 'file'
-  if (/^https?:\/\/\S+/i.test(seedInput.trim())) return 'url'
+  if (parseUrlsFromText(seedInput).length > 0) return 'url'
   return 'text'
+}
+
+function parseUrlsFromText(text: string): string[] {
+  const valid: string[] = []
+  for (const raw of text.split(/[\n\s]+/)) {
+    // 去掉首尾全角/半角标点（常见于从网页复制带逗号的链接）
+    const s = raw.replace(/^[,;，；、。！？""''…【】《》（）]+/, '').replace(/[,;，；、。！？""''…【】《》（）]+$/, '').trim()
+    if (!s) continue
+    try {
+      const u = new URL(s)
+      if (u.protocol === 'http:' || u.protocol === 'https:') valid.push(u.href)
+    } catch { /* 非法 URL，忽略 */ }
+  }
+  return [...new Set(valid)].slice(0, 20)
 }
 
 const INPUT_MODE_LABELS: Record<InputMode, { zh: string; en: string }> = {
@@ -699,9 +713,9 @@ export default function DeepSearchPage() {
       return { payload: { kind: 'text', text }, sig: `text:${text}` }
     }
     if (inputMode === 'url') {
-      const u = seedInput.trim()
-      if (!/^https?:\/\//i.test(u)) throw new Error(locale === 'zh' ? '请输入有效的 http(s) 链接' : 'Please enter a valid http(s) URL')
-      return { payload: { kind: 'url', url: u }, sig: `url:${u}` }
+      const urls = parseUrlsFromText(seedInput)
+      if (!urls.length) throw new Error(locale === 'zh' ? '请输入至少一个有效的 http(s) 链接' : 'Please enter at least one valid http(s) URL')
+      return { payload: { kind: 'url', url: urls[0] }, sig: `url:${urls.join('|')}` }
     }
     if (!file) throw new Error('请上传一个文件(图片 / PDF / 文本)')
     const sig = `file:${file.name}:${file.size}:${file.lastModified}`
@@ -750,9 +764,9 @@ export default function DeepSearchPage() {
   const start = async () => {
     // 链接模式 → 爬取式深度搜索：抓取该网址(自动翻页) → 批量抽取实体 → 深挖
     if (inputMode === 'url') {
-      const u = seedInput.trim()
-      if (!/^https?:\/\//i.test(u)) {
-        setResolveError(locale === 'zh' ? '请输入有效的 http(s) 链接' : 'Please enter a valid http(s) URL')
+      const urls = parseUrlsFromText(seedInput)
+      if (!urls.length) {
+        setResolveError(locale === 'zh' ? '请输入至少一个有效的 http(s) 链接' : 'Please enter at least one valid http(s) URL')
         return
       }
       setResolveError(null)
@@ -766,19 +780,16 @@ export default function DeepSearchPage() {
       const res = await fetch('/api/deep-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seedUrl: u, crawlPages, maxDepth, maxPerLevel }),
+        body: JSON.stringify({ seedUrls: urls, crawlPages, maxDepth, maxPerLevel }),
       })
       const data = await res.json()
       if (!data.success) {
         setResolveError('启动失败: ' + data.error)
         return
       }
-      let label = u
-      try {
-        label = new URL(u).hostname
-      } catch {
-        /* keep url */
-      }
+      const label = urls.length === 1
+        ? (() => { try { return new URL(urls[0]).hostname } catch { return urls[0] } })()
+        : `${urls.length} 个链接`
       setRunId(data.runId)
       setRun({ id: data.runId, seedName: label, seedType: 'institution', status: 'pending', progress: 0, message: '启动中…', nodeCount: 0, edgeCount: 0 })
       fetchHistory()
@@ -1263,6 +1274,8 @@ export default function DeepSearchPage() {
     })
   }, [])
 
+  const parsedUrls = useMemo(() => parseUrlsFromText(seedInput), [seedInput])
+
   const ranked = useMemo(() => [...filteredNodes].sort((a, b) => b.importance - a.importance), [filteredNodes])
   // 搜索时排行榜只显示命中项
   const rankedShown = useMemo(
@@ -1347,7 +1360,17 @@ export default function DeepSearchPage() {
               <span className="text-[11px] text-slate-400">{t('deepSearch.seedHint')}</span>
             </div>
 
-            {inputMode !== 'file' && (
+            {inputMode === 'url' ? (
+              <textarea
+                value={seedInput}
+                onChange={(e) => onSeedInputChange(e.target.value)}
+                rows={3}
+                className="w-full border-2 border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-900 resize-y min-h-[72px]"
+                placeholder={locale === 'zh'
+                  ? '每行一个链接，或用逗号/空格分隔；可一次粘贴多个站点，将合并爬取并搜索'
+                  : 'One URL per line, or comma/space separated; multiple sites will be crawled together'}
+              />
+            ) : (
               <input
                 value={seedInput}
                 onChange={(e) => onSeedInputChange(e.target.value)}
@@ -1356,12 +1379,34 @@ export default function DeepSearchPage() {
               />
             )}
 
+            {inputMode === 'url' && parsedUrls.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {parsedUrls.map((u) => (
+                  <span
+                    key={u}
+                    className="inline-flex items-center gap-1 max-w-full text-[11px] text-sky-800 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5"
+                    title={u}
+                  >
+                    <Link2 className="w-3 h-3 shrink-0" />
+                    <span className="truncate max-w-[280px]">{(() => { try { return new URL(u).hostname } catch { return u } })()}</span>
+                  </span>
+                ))}
+                <span className="text-[11px] text-slate-500 self-center">
+                  {locale === 'zh' ? `共 ${parsedUrls.length} 个链接，将一起爬取` : `${parsedUrls.length} URLs will be crawled`}
+                </span>
+              </div>
+            )}
+
             {inputMode === 'url' && (
               <div className="flex items-center gap-2 flex-wrap text-xs mt-2">
                 <span className="flex items-center gap-1 text-sky-700 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5">
                   <Link2 className="w-3 h-3" /> {t('deepSearch.crawlMode')}
                 </span>
-                <span className="text-slate-500">{t('deepSearch.crawlDesc')}</span>
+                <span className="text-slate-500">
+                  {locale === 'zh'
+                    ? `每个链接自动翻页抓取 → 批量抽取实体 → 多站合并后深挖`
+                    : t('deepSearch.crawlDesc')}
+                </span>
                 <label className="flex items-center gap-1.5 text-slate-600 ml-1">
                   {t('deepSearch.crawlPages')}
                   <input

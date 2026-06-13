@@ -4,6 +4,7 @@ import "./globals.css";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { LocaleProvider } from "@/contexts/LocaleContext";
+import BackendStatus from "@/components/BackendStatus";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -34,6 +35,7 @@ export default function RootLayout({
           <LocaleProvider>
             <AuthProvider>
               {children}
+              <BackendStatus />
             </AuthProvider>
           </LocaleProvider>
         </ThemeProvider>

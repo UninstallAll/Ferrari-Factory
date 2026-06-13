@@ -3,33 +3,63 @@ import { prisma } from '@/lib/prisma'
 import { runDeepSearch } from '@/lib/graphSearch/engine'
 import { NODE_TYPES } from '@/lib/graphSearch/types'
 
+function parseHttpUrls(input: unknown): string[] {
+  const candidates: string[] = []
+  if (Array.isArray(input)) {
+    for (const item of input) candidates.push(String(item || '').trim())
+  } else if (typeof input === 'string') {
+    candidates.push(...input.split(/[\n\s]+/).map((s) => s.trim()).filter(Boolean))
+  }
+  const valid: string[] = []
+  for (const raw of candidates) {
+    const s = raw.replace(/^[,;，；、。！？""''…【】《》（）]+/, '').replace(/[,;，；、。！？""''…【】《》（）]+$/, '').trim()
+    try {
+      const u = new URL(s)
+      if (u.protocol === 'http:' || u.protocol === 'https:') valid.push(u.href)
+    } catch { /* 忽略非法 URL */ }
+  }
+  return [...new Set(valid)].slice(0, 20)
+}
+
+function crawlRunLabel(urls: string[]): string {
+  if (urls.length === 1) {
+    try {
+      return new URL(urls[0]).hostname
+    } catch {
+      return urls[0]
+    }
+  }
+  const hosts = urls
+    .map((u) => {
+      try {
+        return new URL(u).hostname
+      } catch {
+        return u
+      }
+    })
+    .slice(0, 3)
+  const suffix = urls.length > 3 ? ` 等 ${urls.length} 站` : ''
+  return hosts.join(' · ') + suffix
+}
+
 // POST: 启动一次深度搜索(异步，立即返回 runId；引擎在后台跑并增量写库)
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const seedUrl = String(body.seedUrl || '').trim()
+    const seedUrls = parseHttpUrls(body.seedUrls ?? body.seedUrl)
     const maxDepth = Math.min(Math.max(parseInt(body.maxDepth) || 2, 1), 10)
     const maxPerLevel = Math.min(Math.max(parseInt(body.maxPerLevel) || 6, 1), 10)
 
     // 爬取模式：给定网址 → 自动翻页抓取真实正文 → 批量抽取实体 → 深挖
-    if (seedUrl) {
-      if (!/^https?:\/\//i.test(seedUrl)) {
-        return NextResponse.json({ success: false, error: 'seedUrl 必须是 http(s) 链接' }, { status: 400 })
-      }
+    if (seedUrls.length > 0) {
       const crawlPages = Math.min(Math.max(parseInt(body.crawlPages) || 4, 1), 20)
-      let label = String(body.seedName || '').trim()
-      if (!label) {
-        try {
-          label = new URL(seedUrl).hostname
-        } catch {
-          label = seedUrl
-        }
-      }
+      const label = String(body.seedName || '').trim() || crawlRunLabel(seedUrls)
       const run = await prisma.graphRun.create({
         data: {
           seedName: label,
           seedType: 'institution',
-          seedUrl,
+          seedUrl: seedUrls[0],
+          seedUrls: JSON.stringify(seedUrls),
           crawlPages,
           maxDepth,
           maxPerLevel,

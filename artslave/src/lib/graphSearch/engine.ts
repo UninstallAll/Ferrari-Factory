@@ -45,7 +45,7 @@ export async function runDeepSearch(runId: string): Promise<void> {
     globalNodeCap: 250,
   }
 
-  const crawlMode = !!run.seedUrl
+  const crawlMode = !!run.seedUrl || !!run.seedUrls
   const provider = (process.env.RETRIEVAL_PROVIDER || 'wikipedia').toLowerCase()
 
   const nodes = new Map<string, GraphNodeData>()
@@ -61,9 +61,10 @@ export async function runDeepSearch(runId: string): Promise<void> {
 
   try {
     if (crawlMode) {
-      await log(`开始爬取式搜索：${run.seedUrl}`, 'step')
+      const crawlUrls = parseCrawlUrls(run)
+      await log(`开始爬取式搜索：${crawlUrls.length > 1 ? `${crawlUrls.length} 个链接` : crawlUrls[0]}`, 'step')
       await log(`流程：① 抓取网页(自动翻页) → ② 从真实正文批量抽取实体/关系 → ③ 对重点实体用真实资料(来源=${provider})继续深挖`, 'info')
-      await seedFromCrawl(runId, run.seedUrl!, run.crawlPages, nodes, edges, config, log)
+      await seedFromCrawl(runId, crawlUrls, run.crawlPages, nodes, edges, config, log)
       if (nodes.size === 0) {
         throw new Error('未能从该网址抓取/抽取到任何实体，请检查链接是否可访问、是否为列表/内容页')
       }
@@ -276,12 +277,32 @@ export async function runDeepSearch(runId: string): Promise<void> {
 }
 
 /**
+ * 解析爬取起始链接(支持 JSON 多链接或单个 seedUrl)
+ */
+export function parseCrawlUrls(run: { seedUrl?: string | null; seedUrls?: string | null }): string[] {
+  if (run.seedUrls) {
+    try {
+      const arr = JSON.parse(run.seedUrls)
+      if (Array.isArray(arr)) {
+        const urls = arr.map((u) => String(u).trim()).filter((u) => /^https?:\/\/\S+/i.test(u))
+        if (urls.length) return [...new Set(urls)]
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  const one = String(run.seedUrl || '').trim()
+  if (/^https?:\/\/\S+/i.test(one)) return [one]
+  return []
+}
+
+/**
  * 爬取模式播种：抓取起始网址(自动翻页) → 从每页真实正文抽取实体/关系 → 写入图谱(深度=1)。
- * 抽取出的节点出处=对应页面 URL，可核验。完成后按"度"为节点赋相关性，便于后续挑重点深挖。
+ * 支持多个起始链接，结果合并到同一张图谱。
  */
 async function seedFromCrawl(
   runId: string,
-  seedUrl: string,
+  seedUrls: string[],
   crawlPages: number | null,
   nodes: Map<string, GraphNodeData>,
   edges: Map<string, GraphEdgeData>,
@@ -289,9 +310,8 @@ async function seedFromCrawl(
   log: (message: string, level?: string, meta?: any) => Promise<void>
 ): Promise<void> {
   const maxPages = Math.max(1, crawlPages || Number(process.env.CRAWL_MAX_PAGES) || 4)
-  await log(`① 抓取网页：从 ${seedUrl} 起，自动翻页最多 ${maxPages} 页${process.env.CRAWL_JS === '1' ? '（JS 渲染已开启）' : ''}`, 'step')
 
-  // 预检：抓取成功后但抽取开始前，先确认 LLM 可达，否则立刻报明确错误
+  // 预检：抓取前确认 LLM 可达
   const llmBaseUrl = (process.env.OPENAI_BASE_URL || 'https://api.openai.com').replace(/\/$/, '')
   try {
     await fetch(`${llmBaseUrl}/models`, {
@@ -306,117 +326,135 @@ async function seedFromCrawl(
     throw new Error(hint)
   }
 
-  const pages = await crawlListing(seedUrl, {
-    maxPages,
-    onPage: async (url, idx, total) => {
-      await log(`抓取第 ${idx}/${total} 页：${url}`, 'llm')
-    },
-  })
-
-  if (!pages.length) {
-    await log('✗ 未抓取到任何可用页面内容', 'error')
-    return
+  if (seedUrls.length > 1) {
+    await log(`① 多链接爬取：共 ${seedUrls.length} 个起始站，每个最多翻 ${maxPages} 页`, 'step')
   }
-  await log(`✓ 共抓到 ${pages.length} 页真实内容，开始从正文抽取实体与关系…`, 'success')
 
-  let pageIdx = 0
-  for (const page of pages) {
-    pageIdx++
+  for (let si = 0; si < seedUrls.length; si++) {
+    const seedUrl = seedUrls[si]
     if (await isStopped(runId)) return
 
-    await prisma.graphRun.update({
-      where: { id: runId },
-      data: {
-        progress: Math.min(58, 5 + Math.round((pageIdx / pages.length) * 53)),
-        message: `解析第 ${pageIdx}/${pages.length} 页正文…(已发现 ${nodes.size} 节点)`,
+    if (seedUrls.length > 1) {
+      await log(`━━ 起始站 ${si + 1}/${seedUrls.length}：${seedUrl}`, 'step')
+    } else {
+      await log(`① 抓取网页：从 ${seedUrl} 起，自动翻页最多 ${maxPages} 页${process.env.CRAWL_JS === '1' ? '（JS 渲染已开启）' : ''}`, 'step')
+    }
+
+    const pages = await crawlListing(seedUrl, {
+      maxPages,
+      onPage: async (url, idx, total) => {
+        const prefix = seedUrls.length > 1 ? `[站${si + 1}] ` : ''
+        await log(`${prefix}抓取第 ${idx}/${total} 页：${url}`, 'llm')
       },
     })
 
-    let extraction
-    try {
-      extraction = await extractPageGraph(page.text, page.url, 22)
-    } catch (err) {
-      await log(`⚠ 第 ${pageIdx} 页抽取失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+    if (!pages.length) {
+      await log(`✗ ${seedUrl} 未抓取到可用页面内容`, 'error')
       continue
     }
+    await log(`✓ ${seedUrl} 共抓到 ${pages.length} 页，开始抽取实体与关系…`, 'success')
 
-    const touchedNodes: GraphNodeData[] = []
-    const touchedEdges: GraphEdgeData[] = []
-    const newNames: string[] = []
+    let pageIdx = 0
+    for (const page of pages) {
+      pageIdx++
+      if (await isStopped(runId)) return
 
-    const ensureNode = (name: string, type: any, evidence?: string): boolean => {
-      const key = canonicalKey(type, name)
-      if (nodes.has(key)) {
-        const ex = nodes.get(key)!
-        ex.discoveryCount += 1
-        touchedNodes.push(ex)
+      await prisma.graphRun.update({
+        where: { id: runId },
+        data: {
+          progress: Math.min(58, 5 + Math.round(((si + pageIdx / pages.length) / seedUrls.length) * 53)),
+          message: `解析 ${seedUrl} 第 ${pageIdx}/${pages.length} 页…(已发现 ${nodes.size} 节点)`,
+        },
+      })
+
+      let extraction
+      try {
+        extraction = await extractPageGraph(page.text, page.url, 22)
+      } catch (err) {
+        await log(`⚠ ${page.url} 抽取失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+        continue
+      }
+
+      const touchedNodes: GraphNodeData[] = []
+      const touchedEdges: GraphEdgeData[] = []
+      const newNames: string[] = []
+
+      const ensureNode = (name: string, type: any, evidence?: string): boolean => {
+        const key = canonicalKey(type, name)
+        if (nodes.has(key)) {
+          const ex = nodes.get(key)!
+          ex.discoveryCount += 1
+          touchedNodes.push(ex)
+          return true
+        }
+        if (nodes.size >= config.globalNodeCap) return false
+        const nd: GraphNodeData = {
+          key,
+          name,
+          type,
+          depth: 1,
+          relevanceScore: 0.5,
+          discoveryCount: 1,
+          year: null,
+          evidence: evidence || '',
+          sourceUrl: page.url,
+          degree: 0,
+          pagerank: 0,
+          importance: 0,
+        }
+        nodes.set(key, nd)
+        touchedNodes.push(nd)
+        newNames.push(name)
         return true
       }
-      if (nodes.size >= config.globalNodeCap) return false
-      const nd: GraphNodeData = {
-        key,
-        name,
-        type,
-        depth: 1,
-        relevanceScore: 0.5,
-        discoveryCount: 1,
-        year: null,
-        evidence: evidence || '',
-        sourceUrl: page.url,
-        degree: 0,
-        pagerank: 0,
-        importance: 0,
-      }
-      nodes.set(key, nd)
-      touchedNodes.push(nd)
-      newNames.push(name)
-      return true
-    }
 
-    for (const n of extraction.nodes) ensureNode(n.name, n.type, n.evidence)
+      for (const n of extraction.nodes) ensureNode(n.name, n.type, n.evidence)
 
-    for (const e of extraction.edges) {
-      const sKey = canonicalKey(e.sourceType, e.source)
-      const tKey = canonicalKey(e.targetType, e.target)
-      if (sKey === tKey) continue
-      if (!ensureNode(e.source, e.sourceType, e.evidence)) continue
-      if (!ensureNode(e.target, e.targetType, e.evidence)) continue
+      for (const e of extraction.edges) {
+        const sKey = canonicalKey(e.sourceType, e.source)
+        const tKey = canonicalKey(e.targetType, e.target)
+        if (sKey === tKey) continue
+        if (!ensureNode(e.source, e.sourceType, e.evidence)) continue
+        if (!ensureNode(e.target, e.targetType, e.evidence)) continue
 
-      const evLine = e.evidence ? `${e.evidence} —— ${page.url}` : page.url
-      const eid = undirectedEdgeId(sKey, tKey, e.relationship)
-      const exEdge = edges.get(eid)
-      if (exEdge) {
-        exEdge.weight = Math.min(1, Math.max(exEdge.weight, e.strength) + 0.05)
-        exEdge.confidence = Math.min(1, exEdge.confidence + 0.05)
-        exEdge.evidence.push(evLine)
-        touchedEdges.push(exEdge)
-      } else {
-        const edge: GraphEdgeData = {
-          sourceKey: sKey,
-          targetKey: tKey,
-          type: e.relationship as RelationType,
-          weight: e.strength,
-          confidence: 0.7, // 有真实页面正文 + 出处作依据
-          evidence: [evLine],
+        const evLine = e.evidence ? `${e.evidence} —— ${page.url}` : page.url
+        const eid = undirectedEdgeId(sKey, tKey, e.relationship)
+        const exEdge = edges.get(eid)
+        if (exEdge) {
+          exEdge.weight = Math.min(1, Math.max(exEdge.weight, e.strength) + 0.05)
+          exEdge.confidence = Math.min(1, exEdge.confidence + 0.05)
+          exEdge.evidence.push(evLine)
+          touchedEdges.push(exEdge)
+        } else {
+          const edge: GraphEdgeData = {
+            sourceKey: sKey,
+            targetKey: tKey,
+            type: e.relationship as RelationType,
+            weight: e.strength,
+            confidence: 0.7,
+            evidence: [evLine],
+          }
+          edges.set(eid, edge)
+          touchedEdges.push(edge)
         }
-        edges.set(eid, edge)
-        touchedEdges.push(edge)
       }
+
+      await persistNodes(runId, touchedNodes)
+      await persistEdges(runId, touchedEdges)
+      await prisma.graphRun.update({
+        where: { id: runId },
+        data: { nodeCount: nodes.size, edgeCount: edges.size },
+      })
+
+      const preview = newNames.slice(0, 6).join('、') + (newNames.length > 6 ? ` 等 ${newNames.length} 个` : '')
+      await log(
+        `${page.url}：抽取 ${extraction.nodes.length} 实体 / ${extraction.edges.length} 关系${newNames.length ? `，新增：${preview}` : '（无新增）'}`,
+        'success'
+      )
     }
-
-    await persistNodes(runId, touchedNodes)
-    await persistEdges(runId, touchedEdges)
-    await prisma.graphRun.update({
-      where: { id: runId },
-      data: { nodeCount: nodes.size, edgeCount: edges.size },
-    })
-
-    const preview = newNames.slice(0, 6).join('、') + (newNames.length > 6 ? ` 等 ${newNames.length} 个` : '')
-    await log(
-      `第 ${pageIdx} 页：抽取 ${extraction.nodes.length} 实体 / ${extraction.edges.length} 关系${newNames.length ? `，新增节点：${preview}` : '（无新增）'}`,
-      'success'
-    )
   }
+
+  if (nodes.size === 0) return
 
   // 按度为节点赋相关性(度越高=越像枢纽/越重要)，供后续深挖择优
   const deg = new Map<string, number>()
