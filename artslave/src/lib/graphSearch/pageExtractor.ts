@@ -130,7 +130,10 @@ export async function extractPageGraph(
   url: string,
   maxEntities = 22
 ): Promise<PageExtraction> {
-  const chunks = chunkText(text, 8000, 2)
+  // 正文来自 readability(已保留标题层级与「锚文本 (url)」链接)。
+  // 放宽截断：长文章最多分 4 块(约 32K 字符)，不再被旧的 16K 上限砍掉后半段。
+  const maxChunks = Number(process.env.EXTRACT_MAX_CHUNKS) || 4
+  const chunks = chunkText(text, 8000, maxChunks)
   const nodeMap = new Map<string, ExtractedNode>()
   const edgeMap = new Map<string, ExtractedEdge>()
 

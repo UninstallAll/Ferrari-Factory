@@ -367,8 +367,9 @@ model GraphRun {
   seedName    String // 种子实体名
   seedType    String // 种子类型: artist|exhibition|institution|curator|movement|location
   seedUrl     String? // 爬取模式：起始网址(列表/目录页，自动翻页抓取真实内容)
-  seedUrls    String? // 爬取模式：多个起始链接(JSON 数组)
-  crawlPages  Int? // 爬取模式：每个链接最多翻页页数
+  seedUrls      String? // 爬取模式：多个起始链接(JSON 数组)
+  crawlPageMode String? @default("auto") // auto | fixed — 翻页策略
+  crawlPages    Int? // fixed: 目标页数; auto: 安全上限(解析到末页前最多抓多少页)
   status      String    @default("pending") // pending|running|completed|failed|stopped
   maxDepth    Int       @default(2)
   maxPerLevel Int       @default(8)
@@ -427,6 +428,27 @@ model GraphNode {
 
   @@unique([runId, key])
   @@map("graph_nodes")
+}
+
+// 抽取配方缓存：每个站点(origin + 路径段)推断一次「重复记录选择器 + 字段选择器 + 翻页方式」并复用。
+// 已知站点命中缓存可跳过 Phase A 的 LLM 推断；未知 URL 推断一次后即转已知；站点改版导致套用失败则重新推断。
+model ExtractionRecipe {
+  id             String   @id @default(cuid())
+  origin         String // 站点 origin，如 https://www.gallery.com
+  urlPattern     String   @default("*") // 适用的路径段(如 "artists")，区分同站不同列表模板
+  recordSelector String? // 重复记录容器 CSS；空 = 单内容页(走 readability 兜底)
+  recordType     String? // 每条记录代表的实体类型(artist|institution|exhibition...)
+  fields         String   @default("{}") // 字段→{selector, attr} 的 JSON
+  pagination     String   @default("{\"type\":\"none\"}") // 翻页配置 JSON
+  needsJs        Boolean  @default(false) // 该站列表需 JS 渲染才出内容
+  sampleUrl      String? // 推断时用的样本页
+  hitRate        Float? // 最近一次套用的记录命中率(诊断用)
+  lastVerifiedAt DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([origin, urlPattern])
+  @@map("extraction_recipes")
 }
 
 // 图谱边(关系)

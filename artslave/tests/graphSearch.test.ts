@@ -1,0 +1,129 @@
+/** @jest-environment node */
+// 结构优先抽取管线的确定性层离线单测(不联网、不调 LLM、不连库)。
+// 屏蔽 openai(ESM) 与 prisma，使 recipe.ts 的纯函数可被独立导入测试。
+jest.mock('openai', () => ({ __esModule: true, default: class OpenAI {} }))
+jest.mock('@/lib/prisma', () => ({ prisma: {} }))
+
+import * as cheerio from 'cheerio'
+import { harvestStructured } from '@/lib/graphSearch/structured'
+import { shouldRenderWithJs } from '@/lib/graphSearch/render'
+import { extractReadable } from '@/lib/graphSearch/readability'
+import {
+  applyRecipe,
+  recordsToGraph,
+  buildSkeleton,
+  type ExtractionRecipe,
+} from '@/lib/graphSearch/recipe'
+
+describe('structured.ts — JSON-LD 直采', () => {
+  it('解析 schema.org Person/Organization 并抽出关系', () => {
+    const html = `<html><head>
+      <script type="application/ld+json">
+      {"@context":"https://schema.org","@type":"Person","name":"Zhang Wei",
+       "affiliation":{"@type":"Organization","name":"M+ Museum"}}
+      </script></head><body></body></html>`
+    const { entities, relations } = harvestStructured(html, 'https://x.com/p')
+    const names = entities.map((e) => `${e.type}:${e.name}`)
+    expect(names).toContain('artist:Zhang Wei')
+    expect(names).toContain('institution:M+ Museum')
+    expect(relations.some((r) => r.relationship === 'belongs_to' && r.target === 'M+ Museum')).toBe(true)
+  })
+})
+
+describe('recipe.ts — Phase B 确定性套用', () => {
+  const recipe: ExtractionRecipe = {
+    origin: 'https://x.com',
+    urlPattern: 'list',
+    recordSelector: 'li.card',
+    recordType: 'artist',
+    fields: {
+      name: { selector: '.name' },
+      link: { selector: 'a', attr: 'href' },
+      role: { selector: '.role' },
+    },
+    pagination: { type: 'query', param: 'page' },
+    needsJs: false,
+  }
+  const html = `<ul class="artist-list">
+    <li class="card"><h3 class="name">Alice</h3><a href="/a/alice">x</a><span class="role">Curator</span></li>
+    <li class="card"><h3 class="name">Bob</h3><a href="/a/bob">x</a><span class="role">Artist</span></li>
+    <li class="card"><h3 class="name">Carol</h3><a href="/a/carol">x</a></li>
+  </ul>`
+
+  it('按配方抽出每条记录的字段并把链接转绝对', () => {
+    const $ = cheerio.load(html)
+    const records = applyRecipe($, recipe, 'https://x.com/list')
+    expect(records).toHaveLength(3)
+    expect(records[0]).toMatchObject({ name: 'Alice', role: 'Curator', link: 'https://x.com/a/alice' })
+  })
+
+  it('recordsToGraph 按 role 把 Alice 细化为 curator', () => {
+    const $ = cheerio.load(html)
+    const { nodes } = recordsToGraph(applyRecipe($, recipe, 'https://x.com/list'), 'artist', 'https://x.com/list')
+    const alice = nodes.find((n) => n.name === 'Alice')
+    const bob = nodes.find((n) => n.name === 'Bob')
+    expect(alice?.type).toBe('curator')
+    expect(bob?.type).toBe('artist')
+  })
+})
+
+describe('recipe.ts — buildSkeleton 折叠重复块', () => {
+  it('把 5 个同构兄弟折叠成示例 + 计数标记', () => {
+    const cards = Array.from({ length: 5 }, (_, i) => `<li class="card"><span>n${i}</span></li>`).join('')
+    const $ = cheerio.load(`<ul>${cards}</ul>`)
+    const skeleton = buildSkeleton($)
+    expect(skeleton).toMatch(/×5/)
+  })
+})
+
+describe('readability.ts — 主正文(保留链接)', () => {
+  it('挑出正文段落并把锚点 URL 内联保留', () => {
+    const html = `<html><body>
+      <nav><a href="/home">Home</a><a href="/about">About</a></nav>
+      <main><article>
+        <h2>About the Artist</h2>
+        <p>This is a long descriptive paragraph about the artist and the exhibition it relates to, with enough text to score well.</p>
+        <p>It mentions <a href="https://museum.org/x">the museum</a> explicitly.</p>
+      </article></main>
+    </body></html>`
+    const $ = cheerio.load(html)
+    const { text, links } = extractReadable($, 'https://x.com/bio')
+    expect(text).toContain('descriptive paragraph about the artist')
+    expect(text).toContain('https://museum.org/x') // 链接 URL 被内联进正文
+    expect(links.some((l) => l.url === 'https://museum.org/x')).toBe(true)
+  })
+})
+
+describe('render.ts — shouldRenderWithJs 判定', () => {
+  it('SPA 空骨架 + bundle 脚本 → 需要渲染', () => {
+    const html = `<html><body>
+      <div id="root"></div>
+      <script src="/_next/static/js/main.bundle.js"></script>
+      <script src="/_next/static/js/vendor.js"></script>
+    </body></html>`
+    const $ = cheerio.load(html)
+    const structured = harvestStructured($, 'https://spa.com')
+    expect(shouldRenderWithJs(html, $, structured)).toBe(true)
+  })
+
+  it('内容充足的静态页 → 不渲染', () => {
+    const paras = Array.from({ length: 8 }, (_, i) =>
+      `<p>Paragraph ${i} with a fair amount of real readable content about art and exhibitions for scoring.</p>`
+    ).join('')
+    const html = `<html><body><main>${paras}</main></body></html>`
+    const $ = cheerio.load(html)
+    const structured = harvestStructured($, 'https://static.com')
+    expect(shouldRenderWithJs(html, $, structured)).toBe(false)
+  })
+
+  it('已含 JSON-LD 结构化数据 → 不渲染(数据已在静态 HTML)', () => {
+    const html = `<html><body><div id="root"></div>
+      <script type="application/ld+json">
+      [{"@type":"Person","name":"Artist Alpha"},{"@type":"Person","name":"Artist Beta"},{"@type":"Organization","name":"Org Gamma"}]
+      </script></body></html>`
+    const $ = cheerio.load(html)
+    const structured = harvestStructured($, 'https://j.com')
+    expect(structured.entities.length).toBeGreaterThanOrEqual(3)
+    expect(shouldRenderWithJs(html, $, structured)).toBe(false)
+  })
+})
