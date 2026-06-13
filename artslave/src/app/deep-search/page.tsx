@@ -579,6 +579,10 @@ export default function DeepSearchPage() {
   // 双向悬停联动：graph → sidebar / sidebar → graph
   const [graphHoveredKey, setGraphHoveredKey] = useState<string | null>(null)
   const [sidebarHoveredKey, setSidebarHoveredKey] = useState<string | null>(null)
+  // ref 用于在 flowNodes useMemo 内读取最新值（不进 deps，避免每次 hover 触发全量布局重算）
+  const sidebarHoveredKeyRef = useRef<string | null>(null)
+  const prevSidebarHoveredRef = useRef<string | null>(null)
+  sidebarHoveredKeyRef.current = sidebarHoveredKey
   const rankItemRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
 
   const running = run?.status === 'running' || run?.status === 'pending'
@@ -855,15 +859,6 @@ export default function DeepSearchPage() {
     rankItemRefs.current.get(graphHoveredKey)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }, [graphHoveredKey])
 
-  // 右侧列表悬停时，图谱镜头平滑飞到对应节点（防抖 150ms，避免快速划过时乱跳）
-  useEffect(() => {
-    if (!sidebarHoveredKey) return
-    const timer = setTimeout(() => {
-      rfInstanceRef.current?.fitView({ nodes: [{ id: sidebarHoveredKey }], duration: 350, padding: 0.4 })
-    }, 150)
-    return () => clearTimeout(timer)
-  }, [sidebarHoveredKey])
-
   // ---------- 筛选 ----------
   // 数据里实际出现的类型/关系/最大深度(用于生成筛选项 + 计数)
   const typeStats = useMemo(() => {
@@ -1063,11 +1058,11 @@ export default function DeepSearchPage() {
           matched: searching && isMatch && !isSel,
           related: focusing && inFocus && !isSel && !(searching && isMatch),
           dim,
-          hovered: sidebarHoveredKey === n.key && !isSel,
+          hovered: sidebarHoveredKeyRef.current === n.key && !isSel,
         },
       }
     })
-  }, [renderNodes, filteredNodes, filteredEdges, selected, relatedKeys, matchedKeys, nodeSizeScale, layoutMode, livePhysics, sidebarHoveredKey])
+  }, [renderNodes, filteredNodes, filteredEdges, selected, relatedKeys, matchedKeys, nodeSizeScale, layoutMode, livePhysics])
 
   // 简洁优雅的连线：默认极细浅灰、无箭头无文字；只有选中节点的相连边才加粗高亮 + 显示关系标签
   const flowEdges: Edge[] = useMemo(
@@ -1114,6 +1109,25 @@ export default function DeepSearchPage() {
   useEffect(() => {
     setRfEdges(flowEdges)
   }, [flowEdges, setRfEdges])
+
+  // 右侧列表悬停时：① 只 patch 前后两个节点的 hovered 标志（不走 flowNodes 全量重算）
+  //                  ② 防抖 80ms 后镜头飞到对应节点
+  useEffect(() => {
+    const prev = prevSidebarHoveredRef.current
+    prevSidebarHoveredRef.current = sidebarHoveredKey
+    // 只改前一个和当前这两个节点，其余节点保持同引用，EntityNodeFast memo 不会重渲染
+    setRfNodes((nodes) =>
+      nodes.map((n) => {
+        if (n.id !== prev && n.id !== sidebarHoveredKey) return n
+        return { ...n, data: { ...(n.data as EntityNodeData), hovered: n.id === sidebarHoveredKey && !(n.data as EntityNodeData).selected } }
+      })
+    )
+    if (!sidebarHoveredKey) return
+    const timer = setTimeout(() => {
+      rfInstanceRef.current?.fitView({ nodes: [{ id: sidebarHoveredKey }], duration: 200, padding: 0.4 })
+    }, 80)
+    return () => clearTimeout(timer)
+  }, [sidebarHoveredKey, setRfNodes])
 
   // 始终记录屏幕上每个节点的当前坐标(供物理模拟续接 / 切换时无缝衔接)
   useEffect(() => {
