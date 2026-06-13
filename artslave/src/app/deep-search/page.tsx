@@ -1,12 +1,12 @@
 'use client'
 
-import { useState, useEffect, useRef, useMemo, useCallback, type MouseEvent as ReactMouseEvent, type Dispatch, type SetStateAction } from 'react'
-import ReactFlow, { Background, Controls, MiniMap, Node, Edge, MarkerType, Handle, Position, useNodesState, useEdgesState, useViewport, type NodeProps } from 'reactflow'
+import { useState, useEffect, useRef, useMemo, useCallback, memo, type MouseEvent as ReactMouseEvent, type Dispatch, type SetStateAction } from 'react'
+import ReactFlow, { Background, Controls, MiniMap, Node, Edge, MarkerType, Handle, Position, useNodesState, useEdgesState, useViewport, type NodeProps, type NodeTypes } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { forceSimulation, forceManyBody, forceLink, forceCollide, forceX, forceY, type Simulation } from 'd3-force'
 import { Search, Play, Square, Loader2, Type, Link2, Upload, FileText, ImageIcon, X, Sparkles, History, Trash2, RefreshCw, Filter,
   Palette, Building2, UserCheck, Waves, MapPin, GraduationCap, Newspaper, Frame, Circle,
-  Wand2, ChevronDown, Target, Network, LayoutGrid, GitBranch, Grid3x3, Atom, Maximize2, type LucideIcon } from 'lucide-react'
+  Wand2, ChevronDown, Target, Network, LayoutGrid, GitBranch, Grid3x3, Atom, Maximize2, Zap, type LucideIcon } from 'lucide-react'
 import AppHeader from '@/components/AppHeader'
 import { useLocale } from '@/contexts/LocaleContext'
 
@@ -147,16 +147,16 @@ interface EntityNodeData {
   type: string
   baseSize: number
   sizeScale: number
-  viewportZoom: number
   color: string
   selected: boolean
   related?: boolean
   matched?: boolean
   dim?: boolean
+  hovered?: boolean
 }
 function EntityNode({ data }: NodeProps<EntityNodeData>) {
   const { zoom: liveZoom } = useViewport()
-  const zoom = data.viewportZoom || liveZoom || 1
+  const zoom = liveZoom || 1
   const Icon = TYPE_ICONS[data.type] || Circle
   const screenSize = data.baseSize * data.sizeScale
   const s = toGraphPx(screenSize, zoom)
@@ -174,16 +174,20 @@ function EntityNode({ data }: NodeProps<EntityNodeData>) {
     ? '4px solid #facc15'
     : data.matched
       ? '4px solid #10b981'
-      : data.related
-        ? '3px solid #fbbf24'
-        : '2px solid rgba(255,255,255,0.9)'
+      : data.hovered
+        ? '3px solid #818cf8'
+        : data.related
+          ? '3px solid #fbbf24'
+          : '2px solid rgba(255,255,255,0.9)'
   const boxShadow = data.selected
     ? '0 0 0 4px rgba(250,204,21,0.35), 0 2px 8px rgba(0,0,0,0.3)'
     : data.matched
       ? '0 0 0 4px rgba(16,185,129,0.4), 0 2px 8px rgba(0,0,0,0.3)'
-      : data.related
-        ? '0 0 0 3px rgba(251,191,36,0.25), 0 2px 8px rgba(0,0,0,0.25)'
-        : '0 2px 8px rgba(0,0,0,0.25)'
+      : data.hovered
+        ? '0 0 0 4px rgba(129,140,248,0.45), 0 2px 8px rgba(0,0,0,0.3)'
+        : data.related
+          ? '0 0 0 3px rgba(251,191,36,0.25), 0 2px 8px rgba(0,0,0,0.25)'
+          : '0 2px 8px rgba(0,0,0,0.25)'
   return (
     <div
       style={{
@@ -238,7 +242,44 @@ function EntityNode({ data }: NodeProps<EntityNodeData>) {
     </div>
   )
 }
-const nodeTypes = { entity: EntityNode }
+// Performance-mode node: no useViewport() subscription → no re-render on zoom/pan
+const EntityNodeFast = memo(function EntityNodeFast({ data }: NodeProps<EntityNodeData>) {
+  const Icon = TYPE_ICONS[data.type] || Circle
+  const s = data.baseSize * data.sizeScale
+  const fontSize = Math.max(9, Math.min(18, s * 0.24))
+  const labelWidth = Math.min(s * 3.8, s * 10)
+  const border = data.selected
+    ? '4px solid #facc15'
+    : data.matched
+      ? '4px solid #10b981'
+      : data.hovered
+        ? '3px solid #818cf8'
+        : data.related
+          ? '3px solid #fbbf24'
+          : '2px solid rgba(255,255,255,0.9)'
+  const boxShadow = data.selected
+    ? '0 0 0 4px rgba(250,204,21,0.35), 0 2px 8px rgba(0,0,0,0.3)'
+    : data.matched
+      ? '0 0 0 4px rgba(16,185,129,0.4), 0 2px 8px rgba(0,0,0,0.3)'
+      : data.hovered
+        ? '0 0 0 4px rgba(129,140,248,0.45), 0 2px 8px rgba(0,0,0,0.3)'
+        : '0 2px 8px rgba(0,0,0,0.25)'
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: Math.max(s, labelWidth), minWidth: s, opacity: data.dim ? 0.2 : 1 }}>
+      <Handle type="target" position={Position.Top} style={{ opacity: 0, pointerEvents: 'none' }} />
+      <div style={{ width: s, height: s, borderRadius: '50%', background: data.color, display: 'flex', alignItems: 'center', justifyContent: 'center', border, boxShadow }}>
+        <Icon size={Math.max(10, s * 0.46)} color="#fff" strokeWidth={2.2} />
+      </div>
+      <div style={{ marginTop: 4, fontSize, fontWeight: 600, color: '#1e293b', textAlign: 'center', width: labelWidth, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', textShadow: '0 1px 2px rgba(255,255,255,0.9)' }}>
+        {data.name}
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0, pointerEvents: 'none' }} />
+    </div>
+  )
+})
+
+const nodeTypesNormal: NodeTypes = { entity: EntityNode }
+const nodeTypesFast: NodeTypes = { entity: EntityNodeFast }
 
 // 同心圆布局：按 depth 分层
 function layout(nodes: ApiNode[]): Map<string, { x: number; y: number }> {
@@ -506,8 +547,12 @@ export default function DeepSearchPage() {
   const [minImportance, setMinImportance] = useState(0)
   const [minRunCount, setMinRunCount] = useState(1)
 
-  // 统一搜索（高亮 + 联动排行，不隐藏节点）
+  // 统一搜索：searchInput 即时更新（控制输入框显示 + 下拉建议），searchQuery 防抖后才驱动图谱高亮
+  const [searchInput, setSearchInput] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [activeSuggestionIdx, setActiveSuggestionIdx] = useState(-1)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
   // 仅显示选择项：开启时只保留搜索命中的节点，并自动重新排列(Finder 清理效果)
   const [onlyMatched, setOnlyMatched] = useState(false)
 
@@ -515,14 +560,14 @@ export default function DeepSearchPage() {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('force')
   const [showLayoutMenu, setShowLayoutMenu] = useState(false)
   const rfInstanceRef = useRef<{
-    fitView: (opts?: { duration?: number; padding?: number }) => void
+    fitView: (opts?: { duration?: number; padding?: number; nodes?: { id: string }[] }) => void
     getViewport?: () => { zoom: number; x: number; y: number }
   } | null>(null)
   const arrangeSigRef = useRef<string>('')
 
   // Obsidian 式「灵动」物理布局(d3-force 持续模拟，节点自动归位)
   const [livePhysics, setLivePhysics] = useState(false)
-  const [viewportZoom, setViewportZoom] = useState(1)
+  const [perfMode, setPerfMode] = useState(true)
   const [nodeSizeScale, setNodeSizeScale] = useState(1)
   const userSizedRef = useRef(false)
   const graphWrapRef = useRef<HTMLDivElement>(null)
@@ -530,6 +575,11 @@ export default function DeepSearchPage() {
   const simRef = useRef<Simulation<SimNode, undefined> | null>(null)
   const simNodesRef = useRef<Map<string, SimNode>>(new Map())
   const rfNodesPosRef = useRef<Map<string, { x: number; y: number }>>(new Map())
+
+  // 双向悬停联动：graph → sidebar / sidebar → graph
+  const [graphHoveredKey, setGraphHoveredKey] = useState<string | null>(null)
+  const [sidebarHoveredKey, setSidebarHoveredKey] = useState<string | null>(null)
+  const rankItemRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
 
   const running = run?.status === 'running' || run?.status === 'pending'
 
@@ -799,6 +849,21 @@ export default function DeepSearchPage() {
     if (consoleOpen) logEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [logs, consoleOpen])
 
+  // 图谱节点悬停时，右侧排行榜对应条目滚动到可见区域
+  useEffect(() => {
+    if (!graphHoveredKey) return
+    rankItemRefs.current.get(graphHoveredKey)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [graphHoveredKey])
+
+  // 右侧列表悬停时，图谱镜头平滑飞到对应节点（防抖 150ms，避免快速划过时乱跳）
+  useEffect(() => {
+    if (!sidebarHoveredKey) return
+    const timer = setTimeout(() => {
+      rfInstanceRef.current?.fitView({ nodes: [{ id: sidebarHoveredKey }], duration: 350, padding: 0.4 })
+    }, 150)
+    return () => clearTimeout(timer)
+  }, [sidebarHoveredKey])
+
   // ---------- 筛选 ----------
   // 数据里实际出现的类型/关系/最大深度(用于生成筛选项 + 计数)
   const typeStats = useMemo(() => {
@@ -835,19 +900,53 @@ export default function DeepSearchPage() {
     )
   }, [apiNodes, hiddenTypes, depthMax, minImportance, minRunCount])
 
+  // 预构建搜索索引：baseFilteredNodes 变化时一次性 toLowerCase，搜索时直接比较，不再每次按键重算
+  const searchIndex = useMemo(
+    () =>
+      baseFilteredNodes.map((n) => ({
+        key: n.key,
+        node: n,
+        text: (n.name + '\0' + (TYPE_LABELS[n.type] || '') + '\0' + n.type).toLowerCase(),
+        name: n.name,
+        type: n.type,
+      })),
+    [baseFilteredNodes]
+  )
+
+  // 即时自动补全建议（从 searchInput 查索引，不走防抖，直接给下拉框用）
+  const suggestions = useMemo(() => {
+    const q = searchInput.trim().toLowerCase()
+    if (!q) return []
+    const result: typeof searchIndex = []
+    for (const item of searchIndex) {
+      if (item.text.includes(q)) {
+        result.push(item)
+        if (result.length >= 8) break
+      }
+    }
+    return result
+  }, [searchInput, searchIndex])
+
+  // 防抖：searchInput → searchQuery（200ms 后才真正触发图谱高亮，避免每次按键全量重渲染）
+  useEffect(() => {
+    if (!searchInput.trim()) {
+      setSearchQuery('')
+      return
+    }
+    const timer = setTimeout(() => setSearchQuery(searchInput), 200)
+    return () => clearTimeout(timer)
+  }, [searchInput])
+
   // 搜索命中的节点（用于图谱高亮 + 排行联动）；空查询返回 null 表示不过滤
   const matchedKeys = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) return null
     const s = new Set<string>()
-    for (const n of baseFilteredNodes) {
-      const label = (TYPE_LABELS[n.type] || '').toLowerCase()
-      if (n.name.toLowerCase().includes(q) || label.includes(q) || n.type.toLowerCase().includes(q)) {
-        s.add(n.key)
-      }
+    for (const item of searchIndex) {
+      if (item.text.includes(q)) s.add(item.key)
     }
     return s
-  }, [searchQuery, baseFilteredNodes])
+  }, [searchQuery, searchIndex])
 
   // 「仅显示选择项」开启且有命中时，只保留命中的节点
   const filteredNodes = useMemo(() => {
@@ -864,6 +963,23 @@ export default function DeepSearchPage() {
       ),
     [apiEdges, visibleKeys, hiddenRelations]
   )
+
+  // 性能模式：节点数 > 200 时只渲染 top-200（按重要度）；边同步裁剪
+  const PERF_NODE_LIMIT = 200
+  const renderNodes = useMemo(() => {
+    if (!perfMode || filteredNodes.length <= PERF_NODE_LIMIT) return filteredNodes
+    return [...filteredNodes].sort((a, b) => b.importance - a.importance).slice(0, PERF_NODE_LIMIT)
+  }, [filteredNodes, perfMode])
+
+  const renderNodeKeys = useMemo(() => {
+    if (renderNodes === filteredNodes) return null
+    return new Set(renderNodes.map((n) => n.key))
+  }, [renderNodes, filteredNodes])
+
+  const renderEdges = useMemo(() => {
+    if (!renderNodeKeys) return filteredEdges
+    return filteredEdges.filter((e) => renderNodeKeys.has(e.sourceKey) && renderNodeKeys.has(e.targetKey))
+  }, [filteredEdges, renderNodeKeys])
 
   const toggleSet = (setter: Dispatch<SetStateAction<Set<string>>>, key: string) => {
     setter((prev) => {
@@ -921,12 +1037,13 @@ export default function DeepSearchPage() {
   }, [defaultNodeSizeScale, filteredNodes.length])
 
   const flowNodes: Node[] = useMemo(() => {
+    // 布局始终基于完整 filteredNodes/filteredEdges（避免 renderNodes 变化导致位置突变）
     const pos = livePhysics
       ? layout(filteredNodes)
       : computeLayout(layoutMode, filteredNodes, filteredEdges, nodeSizeScale)
     const searching = matchedKeys != null
     const focusing = relatedKeys != null
-    return filteredNodes.map((n) => {
+    return renderNodes.map((n) => {
       const color = TYPE_COLORS[n.type] || '#64748b'
       const isSel = selected?.key === n.key
       const inFocus = relatedKeys?.has(n.key) ?? false
@@ -941,21 +1058,21 @@ export default function DeepSearchPage() {
           type: n.type,
           baseSize: baseNodeSize(n.importance),
           sizeScale: nodeSizeScale,
-          viewportZoom,
           color,
           selected: isSel,
           matched: searching && isMatch && !isSel,
           related: focusing && inFocus && !isSel && !(searching && isMatch),
           dim,
+          hovered: sidebarHoveredKey === n.key && !isSel,
         },
       }
     })
-  }, [filteredNodes, filteredEdges, selected, relatedKeys, matchedKeys, nodeSizeScale, viewportZoom, layoutMode, livePhysics])
+  }, [renderNodes, filteredNodes, filteredEdges, selected, relatedKeys, matchedKeys, nodeSizeScale, layoutMode, livePhysics, sidebarHoveredKey])
 
   // 简洁优雅的连线：默认极细浅灰、无箭头无文字；只有选中节点的相连边才加粗高亮 + 显示关系标签
   const flowEdges: Edge[] = useMemo(
     () =>
-      filteredEdges.map((e, i) => {
+      renderEdges.map((e, i) => {
         const incident = !!selected && (e.sourceKey === selected.key || e.targetKey === selected.key)
         const bothMatch = !!matchedKeys && matchedKeys.has(e.sourceKey) && matchedKeys.has(e.targetKey)
         const dim = (!!relatedKeys && !incident) || (!!matchedKeys && !bothMatch && !incident)
@@ -971,15 +1088,15 @@ export default function DeepSearchPage() {
             stroke: incident ? '#f59e0b' : '#94a3b8',
             opacity: incident ? 1 : dim ? 0.12 : 0.65,
           },
-          labelStyle: { fontSize: 10, fill: '#b45309', fontWeight: 600 },
-          labelBgStyle: { fill: '#fffbeb', fillOpacity: 0.9 },
-          labelBgPadding: [4, 2] as [number, number],
-          labelBgBorderRadius: 4,
+          labelStyle: { fontSize: 14, fill: '#b45309', fontWeight: 600 },
+          labelBgStyle: { fill: '#fffbeb', fillOpacity: 0.92 },
+          labelBgPadding: [6, 4] as [number, number],
+          labelBgBorderRadius: 6,
           markerEnd: incident ? { type: MarkerType.ArrowClosed, color: '#f59e0b' } : undefined,
           zIndex: incident ? 10 : 0,
         }
       }),
-    [filteredEdges, selected, relatedKeys, matchedKeys]
+    [renderEdges, selected, relatedKeys, matchedKeys]
   )
 
   // ReactFlow 内部受控状态(支持拖动)；高亮/筛选变化时合并样式但保留已拖动的位置
@@ -1057,7 +1174,12 @@ export default function DeepSearchPage() {
       .alphaDecay(0.02)
       .velocityDecay(0.42)
 
+    // 节流到 ~30fps，减少 React 渲染压力
+    let lastTickTime = 0
     sim.on('tick', () => {
+      const now = performance.now()
+      if (now - lastTickTime < 33) return
+      lastTickTime = now
       setRfNodes((prev) =>
         prev.map((n) => {
           const s = map.get(n.id)
@@ -1380,10 +1502,10 @@ export default function DeepSearchPage() {
         </div>
       </div>
 
-      {/* 视图切换 + 历史(从顶栏移下，更显眼) */}
+      {/* 视图切换 + 搜索 + 历史 */}
       <div className="bg-slate-50 border-b-2 border-slate-200 px-6 py-3 flex items-center gap-4">
-        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">视图</span>
-        <div className="flex items-center bg-white border-2 border-slate-300 rounded-xl p-1 shadow-sm">
+        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider shrink-0">视图</span>
+        <div className="flex items-center bg-white border-2 border-slate-300 rounded-xl p-1 shadow-sm shrink-0">
           <button
             onClick={() => {
               if (viewMode !== 'run') {
@@ -1408,8 +1530,152 @@ export default function DeepSearchPage() {
           </button>
         </div>
 
+        {/* 搜索：夹在全局总图与历史之间，居中 */}
+        <div className="flex-1 flex items-center justify-center gap-3 min-w-0 px-2">
+          {/* 带自动补全的搜索框 */}
+          <div className="relative w-full max-w-md">
+            <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none z-10" />
+            <input
+              ref={searchInputRef}
+              value={searchInput}
+              onChange={(e) => {
+                const v = e.target.value
+                setSearchInput(v)
+                setShowSuggestions(true)
+                setActiveSuggestionIdx(-1)
+              }}
+              onFocus={() => { if (searchInput) setShowSuggestions(true) }}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 120)}
+              onKeyDown={(e) => {
+                if (!showSuggestions || suggestions.length === 0) return
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setActiveSuggestionIdx((i) => Math.min(i + 1, suggestions.length - 1))
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setActiveSuggestionIdx((i) => Math.max(i - 1, -1))
+                } else if (e.key === 'Enter' && activeSuggestionIdx >= 0) {
+                  e.preventDefault()
+                  const item = suggestions[activeSuggestionIdx]
+                  setSearchInput(item.name)
+                  setSearchQuery(item.name)
+                  setShowSuggestions(false)
+                  setActiveSuggestionIdx(-1)
+                  const n = item.node
+                  setSelected(n)
+                  setTimeout(() => rfInstanceRef.current?.fitView({ nodes: [{ id: n.key }], duration: 400, padding: 0.35 }), 60)
+                } else if (e.key === 'Escape') {
+                  setShowSuggestions(false)
+                  setActiveSuggestionIdx(-1)
+                }
+              }}
+              placeholder={t('deepSearch.searchHighlight')}
+              className="w-full border-2 border-slate-200 rounded-lg pl-8 pr-7 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-900 bg-white"
+              autoComplete="off"
+            />
+            {searchInput && (
+              <button
+                onClick={() => {
+                  setSearchInput('')
+                  setSearchQuery('')
+                  setShowSuggestions(false)
+                  searchInputRef.current?.focus()
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-900 z-10"
+                title="清空"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {/* Google 式自动补全下拉 */}
+            {showSuggestions && suggestions.length > 0 && (
+              <div className="absolute left-0 right-0 top-full mt-1 bg-white border-2 border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                {suggestions.map((item, i) => {
+                  const Icon = TYPE_ICONS[item.type] || Circle
+                  const isActive = i === activeSuggestionIdx
+                  const q = searchInput.trim().toLowerCase()
+                  // 高亮匹配部分
+                  const nameLower = item.name.toLowerCase()
+                  const idx = nameLower.indexOf(q)
+                  const highlighted =
+                    idx >= 0 ? (
+                      <>
+                        {item.name.slice(0, idx)}
+                        <span className="font-bold text-slate-900">{item.name.slice(idx, idx + q.length)}</span>
+                        {item.name.slice(idx + q.length)}
+                      </>
+                    ) : item.name
+                  return (
+                    <button
+                      key={item.key}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        setSearchInput(item.name)
+                        setSearchQuery(item.name)
+                        setShowSuggestions(false)
+                        setActiveSuggestionIdx(-1)
+                        const n = item.node
+                        setSelected(n)
+                        setTimeout(() => rfInstanceRef.current?.fitView({ nodes: [{ id: n.key }], duration: 400, padding: 0.35 }), 60)
+                      }}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm border-b border-slate-50 last:border-0 transition-colors ${
+                        isActive ? 'bg-slate-100' : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <span
+                        className="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
+                        style={{ background: TYPE_COLORS[item.type] || '#64748b' }}
+                      >
+                        <Icon className="w-3.5 h-3.5 text-white" strokeWidth={2.4} />
+                      </span>
+                      <span className="flex-1 truncate text-slate-700">{highlighted}</span>
+                      <span className="text-[11px] text-slate-400 shrink-0">{TYPE_LABELS[item.type] || item.type}</span>
+                    </button>
+                  )
+                })}
+                {/* 搜索全部提示 */}
+                <div className="px-3 py-1.5 text-[11px] text-slate-400 border-t border-slate-100 flex items-center gap-1">
+                  <Search className="w-3 h-3" />
+                  按 Enter 高亮全部 {matchedKeys?.size ?? suggestions.length} 个匹配节点
+                </div>
+              </div>
+            )}
+          </div>
+          {matchedKeys && (
+            <p className="text-[11px] text-slate-500 shrink-0">
+              {matchedKeys.size > 0 ? (
+                <>高亮 <b className="text-emerald-600">{matchedKeys.size}</b> 个</>
+              ) : (
+                <span className="text-slate-400">无匹配</span>
+              )}
+            </p>
+          )}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className={`text-xs whitespace-nowrap ${matchedKeys ? 'text-slate-600' : 'text-slate-400'}`}>
+              {t('deepSearch.onlyMatched')}
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={onlyMatched}
+              disabled={!matchedKeys}
+              onClick={() => setOnlyMatched((v) => !v)}
+              className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+                onlyMatched ? 'bg-emerald-500' : 'bg-slate-300'
+              } ${!matchedKeys ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+              title={matchedKeys ? '只保留搜索命中的节点，并重新排列' : '先搜索以选择节点'}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                  onlyMatched ? 'translate-x-4' : ''
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+
         {/* 历史运行(数据库) */}
-        <div className="relative ml-auto">
+        <div className="relative shrink-0">
           <button
             onClick={() => { setShowHistory((v) => !v); fetchHistory() }}
             className="flex items-center gap-1.5 text-sm font-medium text-slate-700 hover:text-slate-900 bg-white border-2 border-slate-300 rounded-xl px-4 py-2 shadow-sm"
@@ -1647,31 +1913,47 @@ export default function DeepSearchPage() {
           <ReactFlow
             nodes={rfNodes}
             edges={rfEdges}
-            nodeTypes={nodeTypes}
+            nodeTypes={perfMode ? nodeTypesFast : nodeTypesNormal}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onNodeClick={onNodeClick}
             onNodeDragStart={onNodeDragStart}
             onNodeDrag={onNodeDrag}
             onNodeDragStop={onNodeDragStop}
-            onMove={(_, vp) => setViewportZoom(vp.zoom)}
+            onNodeMouseEnter={(_: any, node: Node) => setGraphHoveredKey(node.id)}
+            onNodeMouseLeave={() => setGraphHoveredKey(null)}
             onPaneClick={() => { setSelected(null); setShowLayoutMenu(false) }}
-            onInit={(inst) => {
-              rfInstanceRef.current = inst
-              setViewportZoom(inst.getViewport().zoom)
-            }}
+            onInit={(inst) => { rfInstanceRef.current = inst }}
             fitView
             minZoom={0.15}
             maxZoom={2.5}
           >
             <Background color="#e2e8f0" gap={26} size={1.5} />
             <Controls />
-            <MiniMap nodeColor={(n) => ((n.data as EntityNodeData)?.color) || '#64748b'} pannable zoomable />
+            {!perfMode && <MiniMap nodeColor={(n) => ((n.data as EntityNodeData)?.color) || '#64748b'} pannable zoomable />}
           </ReactFlow>
 
           {/* 浮动工具栏(左上)：灵动开关 + 整理图谱 */}
           {filteredNodes.length > 0 && (
             <div className="absolute top-3 left-3 z-10 flex flex-wrap items-center gap-2 max-w-[calc(100%-1.5rem)]">
+              {/* 性能模式开关 */}
+              <button
+                onClick={() => setPerfMode((v) => !v)}
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-medium border-2 shadow-sm transition-colors ${
+                  perfMode
+                    ? 'bg-amber-500 border-amber-500 text-white hover:bg-amber-600'
+                    : 'bg-white/95 backdrop-blur border-slate-200 text-slate-700 hover:border-slate-900'
+                }`}
+                title={perfMode
+                  ? '性能模式开启：固定节点大小、无 MiniMap，最多显示 200 节点。点击关闭恢复完整效果'
+                  : '开启性能模式：大幅降低渲染开销，适合节点数量多时使用'}
+              >
+                <Zap className="w-4 h-4" />
+                性能 {perfMode ? '开' : '关'}
+                {perfMode && renderNodeKeys && (
+                  <span className="ml-1 text-xs font-normal opacity-80">{renderNodes.length}/{filteredNodes.length}</span>
+                )}
+              </button>
               <button
                 onClick={toggleLivePhysics}
                 className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-medium border-2 shadow-sm transition-colors ${
@@ -1764,61 +2046,6 @@ export default function DeepSearchPage() {
               </button>
             </div>
 
-            {/* 统一搜索：高亮图谱 + 联动排行 */}
-            <div className="px-4 py-2.5 border-b border-slate-100 shrink-0">
-              <div className="relative">
-                <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="搜索并高亮节点 / 类别…"
-                  className="w-full border-2 border-slate-200 rounded-lg pl-8 pr-7 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-900"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-900"
-                    title="清空"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-              {matchedKeys && (
-                <p className="text-[11px] mt-1.5 text-slate-500">
-                  {matchedKeys.size > 0 ? (
-                    <>图中高亮 <b className="text-emerald-600">{matchedKeys.size}</b> 个匹配{onlyMatched ? '，仅显示这些' : '，其余已淡化'}</>
-                  ) : (
-                    <span className="text-slate-400">没有匹配的节点</span>
-                  )}
-                </p>
-              )}
-
-              {/* 仅显示选择项开关：开启则只保留命中节点并自动重新排列 */}
-              <div className="mt-2 flex items-center justify-between">
-                <span className={`text-xs ${matchedKeys ? 'text-slate-700' : 'text-slate-400'}`}>
-                  仅显示选择项
-                </span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={onlyMatched}
-                  disabled={!matchedKeys}
-                  onClick={() => setOnlyMatched((v) => !v)}
-                  className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
-                    onlyMatched ? 'bg-emerald-500' : 'bg-slate-300'
-                  } ${!matchedKeys ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
-                  title={matchedKeys ? '只保留搜索命中的节点，并重新排列' : '先在上方搜索以选择节点'}
-                >
-                  <span
-                    className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
-                      onlyMatched ? 'translate-x-4' : ''
-                    }`}
-                  />
-                </button>
-              </div>
-            </div>
-
             <div className="flex-1 overflow-y-auto min-h-0">
               {selected && (
                 <div className="p-4 border-b-2 border-slate-200">
@@ -1862,9 +2089,17 @@ export default function DeepSearchPage() {
                     return (
                       <button
                         key={n.key}
+                        ref={(el) => { if (el) rankItemRefs.current.set(n.key, el); else rankItemRefs.current.delete(n.key) }}
                         onClick={() => setSelected(n)}
-                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-slate-100 ${
-                          selected?.key === n.key ? 'bg-slate-100' : ''
+                        onDoubleClick={() => rfInstanceRef.current?.fitView({ nodes: [{ id: n.key }], duration: 400, padding: 0.35 })}
+                        onMouseEnter={() => setSidebarHoveredKey(n.key)}
+                        onMouseLeave={() => setSidebarHoveredKey(null)}
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${
+                          selected?.key === n.key
+                            ? 'bg-slate-100'
+                            : graphHoveredKey === n.key
+                              ? 'bg-indigo-50 ring-1 ring-indigo-300'
+                              : 'hover:bg-slate-100'
                         }`}
                       >
                         <span className="text-xs text-slate-400 w-5 shrink-0">{i + 1}</span>
