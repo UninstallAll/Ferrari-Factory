@@ -6,7 +6,7 @@ import 'reactflow/dist/style.css'
 import { forceSimulation, forceManyBody, forceLink, forceCollide, forceX, forceY, type Simulation } from 'd3-force'
 import { Search, Play, Square, Loader2, Type, Link2, Upload, FileText, ImageIcon, X, Sparkles, History, Trash2, RefreshCw, Filter,
   Palette, Building2, UserCheck, Waves, MapPin, GraduationCap, Newspaper, Frame, Circle,
-  Wand2, ChevronDown, Target, Network, LayoutGrid, GitBranch, Grid3x3, Atom, Maximize2, Zap, type LucideIcon } from 'lucide-react'
+  Wand2, ChevronDown, Target, Network, LayoutGrid, GitBranch, Grid3x3, Atom, Maximize2, Zap, Pin, type LucideIcon } from 'lucide-react'
 import AppHeader from '@/components/AppHeader'
 import { useLocale } from '@/contexts/LocaleContext'
 
@@ -591,14 +591,9 @@ export default function DeepSearchPage() {
   const simNodesRef = useRef<Map<string, SimNode>>(new Map())
   const rfNodesPosRef = useRef<Map<string, { x: number; y: number }>>(new Map())
 
-  // 双向悬停联动：graph → sidebar / sidebar → graph
-  const [graphHoveredKey, setGraphHoveredKey] = useState<string | null>(null)
-  const [sidebarHoveredKey, setSidebarHoveredKey] = useState<string | null>(null)
-  // ref 用于在 flowNodes useMemo 内读取最新值（不进 deps，避免每次 hover 触发全量布局重算）
-  const sidebarHoveredKeyRef = useRef<string | null>(null)
-  const prevSidebarHoveredRef = useRef<string | null>(null)
-  sidebarHoveredKeyRef.current = sidebarHoveredKey
-  const rankItemRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
+  // 侧栏详情：点击词条后显示，鼠标离开侧栏自动隐藏（进入侧栏不触发）；铆钉固定后常驻
+  const [rankDetailOpen, setRankDetailOpen] = useState(false)
+  const [detailPinned, setDetailPinned] = useState(false)
 
   const running = run?.status === 'running' || run?.status === 'pending'
 
@@ -646,6 +641,8 @@ export default function DeepSearchPage() {
     setViewMode('global')
     setShowHistory(false)
     setSelected(null)
+    setRankDetailOpen(false)
+    setDetailPinned(false)
     setRun(null)
     setRunId(null)
     setLogs([])
@@ -671,6 +668,8 @@ export default function DeepSearchPage() {
     setViewMode('run')
     setShowHistory(false)
     setSelected(null)
+    setRankDetailOpen(false)
+    setDetailPinned(false)
     try {
       const res = await fetch(`/api/deep-search/${id}`)
       const data = await res.json()
@@ -695,8 +694,21 @@ export default function DeepSearchPage() {
 
   const deleteRun = useCallback(async (id: string, e: ReactMouseEvent) => {
     e.stopPropagation()
-    if (!confirm('删除这次运行及其图谱数据？')) return
-    await fetch(`/api/deep-search/${id}`, { method: 'DELETE' })
+    if (!confirm('删除这次运行及其图谱数据？此操作不可恢复。')) return
+    // 必须确认服务端真的删除成功，否则界面会"骗人"(只隐藏未删除)
+    try {
+      const res = await fetch(`/api/deep-search/${id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.success) {
+        alert(`删除失败：${data?.error || `HTTP ${res.status}`}。数据未被删除。`)
+        fetchHistory()
+        return
+      }
+    } catch (err) {
+      alert(`删除请求出错：${err instanceof Error ? err.message : String(err)}。数据未被删除。`)
+      fetchHistory()
+      return
+    }
     if (id === runId) {
       setRun(null)
       setApiNodes([])
@@ -776,6 +788,8 @@ export default function DeepSearchPage() {
       setApiNodes([])
       setApiEdges([])
       setSelected(null)
+      setRankDetailOpen(false)
+      setDetailPinned(false)
       setLogs([])
       setConsoleOpen(true)
       const res = await fetch('/api/deep-search', {
@@ -811,6 +825,8 @@ export default function DeepSearchPage() {
     setApiNodes([])
     setApiEdges([])
     setSelected(null)
+    setRankDetailOpen(false)
+    setDetailPinned(false)
     setLogs([])
     setConsoleOpen(true)
     const finalType = seedType || seed.seedType
@@ -864,12 +880,6 @@ export default function DeepSearchPage() {
   useEffect(() => {
     if (consoleOpen) logEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [logs, consoleOpen])
-
-  // 图谱节点悬停时，右侧排行榜对应条目滚动到可见区域
-  useEffect(() => {
-    if (!graphHoveredKey) return
-    rankItemRefs.current.get(graphHoveredKey)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  }, [graphHoveredKey])
 
   // ---------- 筛选 ----------
   // 数据里实际出现的类型/关系/最大深度(用于生成筛选项 + 计数)
@@ -1070,7 +1080,6 @@ export default function DeepSearchPage() {
           matched: searching && isMatch && !isSel,
           related: focusing && inFocus && !isSel && !(searching && isMatch),
           dim,
-          hovered: sidebarHoveredKeyRef.current === n.key && !isSel,
         },
       }
     })
@@ -1121,25 +1130,6 @@ export default function DeepSearchPage() {
   useEffect(() => {
     setRfEdges(flowEdges)
   }, [flowEdges, setRfEdges])
-
-  // 右侧列表悬停时：① 只 patch 前后两个节点的 hovered 标志（不走 flowNodes 全量重算）
-  //                  ② 防抖 80ms 后镜头飞到对应节点
-  useEffect(() => {
-    const prev = prevSidebarHoveredRef.current
-    prevSidebarHoveredRef.current = sidebarHoveredKey
-    // 只改前一个和当前这两个节点，其余节点保持同引用，EntityNodeFast memo 不会重渲染
-    setRfNodes((nodes) =>
-      nodes.map((n) => {
-        if (n.id !== prev && n.id !== sidebarHoveredKey) return n
-        return { ...n, data: { ...(n.data as EntityNodeData), hovered: n.id === sidebarHoveredKey && !(n.data as EntityNodeData).selected } }
-      })
-    )
-    if (!sidebarHoveredKey) return
-    const timer = setTimeout(() => {
-      rfInstanceRef.current?.fitView({ nodes: [{ id: sidebarHoveredKey }], duration: 200, padding: 0.4 })
-    }, 80)
-    return () => clearTimeout(timer)
-  }, [sidebarHoveredKey, setRfNodes])
 
   // 始终记录屏幕上每个节点的当前坐标(供物理模拟续接 / 切换时无缝衔接)
   useEffect(() => {
@@ -1243,7 +1233,9 @@ export default function DeepSearchPage() {
 
   const onNodeClick = useCallback(
     (_: any, node: Node) => {
-      setSelected(apiNodes.find((n) => n.key === node.id) || null)
+      const n = apiNodes.find((x) => x.key === node.id) || null
+      setSelected(n)
+      if (n) setRankDetailOpen(true)
     },
     [apiNodes]
   )
@@ -1283,6 +1275,8 @@ export default function DeepSearchPage() {
     () => (matchedKeys ? ranked.filter((n) => matchedKeys.has(n.key)) : ranked),
     [ranked, matchedKeys]
   )
+
+  const showRankDetail = !!selected && (detailPinned || rankDetailOpen)
 
   // 点击「整理图谱」→ 暂停物理、用所选静态布局重排当前可见节点，并自适应居中
   const applyLayout = useCallback(
@@ -1605,6 +1599,8 @@ export default function DeepSearchPage() {
               if (viewMode !== 'run') {
                 setViewMode('run')
                 setSelected(null)
+                setRankDetailOpen(false)
+                setDetailPinned(false)
                 if (!run) { setApiNodes([]); setApiEdges([]) }
               }
             }}
@@ -1657,6 +1653,7 @@ export default function DeepSearchPage() {
                   setActiveSuggestionIdx(-1)
                   const n = item.node
                   setSelected(n)
+                  setRankDetailOpen(true)
                   setTimeout(() => rfInstanceRef.current?.fitView({ nodes: [{ id: n.key }], duration: 400, padding: 0.35 }), 60)
                 } else if (e.key === 'Escape') {
                   setShowSuggestions(false)
@@ -1710,6 +1707,7 @@ export default function DeepSearchPage() {
                         setActiveSuggestionIdx(-1)
                         const n = item.node
                         setSelected(n)
+                        setRankDetailOpen(true)
                         setTimeout(() => rfInstanceRef.current?.fitView({ nodes: [{ id: n.key }], duration: 400, padding: 0.35 }), 60)
                       }}
                       className={`w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm border-b border-slate-50 last:border-0 transition-colors ${
@@ -2014,9 +2012,7 @@ export default function DeepSearchPage() {
             onNodeDragStart={onNodeDragStart}
             onNodeDrag={onNodeDrag}
             onNodeDragStop={onNodeDragStop}
-            onNodeMouseEnter={(_: any, node: Node) => setGraphHoveredKey(node.id)}
-            onNodeMouseLeave={() => setGraphHoveredKey(null)}
-            onPaneClick={() => { setSelected(null); setShowLayoutMenu(false) }}
+            onPaneClick={() => { setSelected(null); setRankDetailOpen(false); setDetailPinned(false); setShowLayoutMenu(false) }}
             onInit={(inst) => { rfInstanceRef.current = inst }}
             fitView
             minZoom={0.15}
@@ -2132,7 +2128,10 @@ export default function DeepSearchPage() {
 
         {/* 侧栏：重要度排行 + 详情 (固定高度，内部滚动，可折叠) */}
         {rankOpen ? (
-          <aside className="w-80 bg-white border-l-2 border-slate-200 shrink-0 flex flex-col min-h-0">
+          <aside
+            className="w-80 bg-white border-l-2 border-slate-200 shrink-0 flex flex-col min-h-0"
+            onMouseLeave={() => { if (!detailPinned) setRankDetailOpen(false) }}
+          >
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
               <span className="text-sm font-bold text-slate-900">重要度排行 ({rankedShown.length})</span>
               <button onClick={() => setRankOpen(false)} className="text-slate-400 hover:text-slate-900" title="收起">
@@ -2141,13 +2140,25 @@ export default function DeepSearchPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto min-h-0">
-              {selected && (
-                <div className="p-4 border-b-2 border-slate-200">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="w-6 h-6 rounded-full flex items-center justify-center" style={{ background: TYPE_COLORS[selected.type] }}>
-                      {(() => { const I = TYPE_ICONS[selected.type] || Circle; return <I className="w-3.5 h-3.5 text-white" strokeWidth={2.4} /> })()}
-                    </span>
-                    <span className="text-xs text-slate-500">{TYPE_LABELS[selected.type]}</span>
+              {showRankDetail && selected && (
+                <div className="sticky top-0 z-10 bg-white p-4 border-b-2 border-slate-200 shadow-sm">
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ background: TYPE_COLORS[selected.type] }}>
+                        {(() => { const I = TYPE_ICONS[selected.type] || Circle; return <I className="w-3.5 h-3.5 text-white" strokeWidth={2.4} /> })()}
+                      </span>
+                      <span className="text-xs text-slate-500">{TYPE_LABELS[selected.type]}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setDetailPinned((v) => !v)}
+                      className={`shrink-0 p-1 rounded-md transition-colors ${
+                        detailPinned ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
+                      }`}
+                      title={detailPinned ? '取消固定' : '固定详情'}
+                    >
+                      <Pin className={`w-4 h-4 ${detailPinned ? 'fill-current' : ''}`} />
+                    </button>
                   </div>
                   <h3 className="font-bold text-slate-900">{selected.name}</h3>
                   <div className="grid grid-cols-2 gap-2 mt-3 text-xs text-slate-600">
@@ -2183,17 +2194,10 @@ export default function DeepSearchPage() {
                     return (
                       <button
                         key={n.key}
-                        ref={(el) => { if (el) rankItemRefs.current.set(n.key, el); else rankItemRefs.current.delete(n.key) }}
-                        onClick={() => setSelected(n)}
+                        onClick={() => { setSelected(n); setRankDetailOpen(true) }}
                         onDoubleClick={() => rfInstanceRef.current?.fitView({ nodes: [{ id: n.key }], duration: 400, padding: 0.35 })}
-                        onMouseEnter={() => setSidebarHoveredKey(n.key)}
-                        onMouseLeave={() => setSidebarHoveredKey(null)}
                         className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${
-                          selected?.key === n.key
-                            ? 'bg-slate-100'
-                            : graphHoveredKey === n.key
-                              ? 'bg-indigo-50 ring-1 ring-indigo-300'
-                              : 'hover:bg-slate-100'
+                          selected?.key === n.key ? 'bg-slate-100 ring-1 ring-slate-300' : 'hover:bg-slate-100'
                         }`}
                       >
                         <span className="text-xs text-slate-400 w-5 shrink-0">{i + 1}</span>
