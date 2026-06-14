@@ -513,7 +513,8 @@ export default function DeepSearchPage() {
   const [seedType, setSeedType] = useState('artist')
   const [maxDepth, setMaxDepth] = useState(2)
   const [maxPerLevel, setMaxPerLevel] = useState(6)
-  const [crawlPages, setCrawlPages] = useState(4) // 链接模式：自动翻页页数
+  const [crawlPageMode, setCrawlPageMode] = useState<'auto' | 'fixed'>('auto')
+  const [crawlPages, setCrawlPages] = useState(50) // auto: 安全上限; fixed: 目标页数
 
   // 多模态起点输入（自动检测 + 可手动覆盖）
   const [seedInput, setSeedInput] = useState('巴勃罗·毕加索')
@@ -780,7 +781,7 @@ export default function DeepSearchPage() {
       const res = await fetch('/api/deep-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seedUrls: urls, crawlPages, maxDepth, maxPerLevel }),
+        body: JSON.stringify({ seedUrls: urls, crawlPageMode, crawlPages, maxDepth, maxPerLevel }),
       })
       const data = await res.json()
       if (!data.success) {
@@ -1407,16 +1408,50 @@ export default function DeepSearchPage() {
                     ? `每个链接自动翻页抓取 → 批量抽取实体 → 多站合并后深挖`
                     : t('deepSearch.crawlDesc')}
                 </span>
-                <label className="flex items-center gap-1.5 text-slate-600 ml-1">
-                  {t('deepSearch.crawlPages')}
-                  <input
-                    type="number"
-                    min={1}
-                    max={20}
-                    value={crawlPages}
-                    onChange={(e) => setCrawlPages(Math.min(20, Math.max(1, parseInt(e.target.value) || 1)))}
-                    className="w-16 border-2 border-slate-300 rounded-lg px-2 py-1 text-slate-900 focus:outline-none focus:border-slate-900"
-                  />
+                <label className="flex items-center gap-1.5 text-slate-600">
+                  <span className="flex items-center rounded-lg border-2 border-slate-300 overflow-hidden text-xs font-medium">
+                    <button
+                      type="button"
+                      onClick={() => { setCrawlPageMode('auto'); if (crawlPages <= 20) setCrawlPages(50) }}
+                      className={`px-2.5 py-1 transition-colors ${crawlPageMode === 'auto' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      {t('deepSearch.crawlPageAuto')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setCrawlPageMode('fixed'); if (crawlPages > 20) setCrawlPages(4) }}
+                      className={`px-2.5 py-1 transition-colors ${crawlPageMode === 'fixed' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      {t('deepSearch.crawlPageFixed')}
+                    </button>
+                  </span>
+                  {crawlPageMode === 'auto' ? (
+                    <>
+                      <span className="text-slate-500">{t('deepSearch.crawlPageAutoHint')}</span>
+                      <span className="text-slate-400">·</span>
+                      <span>{t('deepSearch.crawlPageCap')}</span>
+                      <input
+                        type="number"
+                        min={5}
+                        max={50}
+                        value={crawlPages}
+                        onChange={(e) => setCrawlPages(Math.min(50, Math.max(5, parseInt(e.target.value) || 50)))}
+                        className="w-14 border-2 border-slate-300 rounded-lg px-2 py-1 text-slate-900 focus:outline-none focus:border-slate-900"
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <span>{t('deepSearch.crawlPages')}</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={crawlPages}
+                        onChange={(e) => setCrawlPages(Math.min(20, Math.max(1, parseInt(e.target.value) || 1)))}
+                        className="w-14 border-2 border-slate-300 rounded-lg px-2 py-1 text-slate-900 focus:outline-none focus:border-slate-900"
+                      />
+                    </>
+                  )}
                 </label>
               </div>
             )}

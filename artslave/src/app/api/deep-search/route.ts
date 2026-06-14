@@ -52,7 +52,10 @@ export async function POST(request: NextRequest) {
 
     // 爬取模式：给定网址 → 自动翻页抓取真实正文 → 批量抽取实体 → 深挖
     if (seedUrls.length > 0) {
-      const crawlPages = Math.min(Math.max(parseInt(body.crawlPages) || 4, 1), 20)
+      const crawlPageMode = body.crawlPageMode === 'fixed' ? 'fixed' : 'auto'
+      const crawlPages = crawlPageMode === 'auto'
+        ? Math.min(Math.max(parseInt(body.crawlPages) || 50, 1), 50)
+        : Math.min(Math.max(parseInt(body.crawlPages) || 4, 1), 20)
       const label = String(body.seedName || '').trim() || crawlRunLabel(seedUrls)
       const run = await prisma.graphRun.create({
         data: {
@@ -60,6 +63,7 @@ export async function POST(request: NextRequest) {
           seedType: 'institution',
           seedUrl: seedUrls[0],
           seedUrls: JSON.stringify(seedUrls),
+          crawlPageMode,
           crawlPages,
           maxDepth,
           maxPerLevel,

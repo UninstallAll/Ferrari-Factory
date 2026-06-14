@@ -1,0 +1,11 @@
+
+> artslave@0.1.0 fake-llm
+> node scripts/fake-llm.js serve
+
+
+[32m🤖 本地假 API (OpenAI 兼容) 已启动[0m
+[36m   地址: [0mhttp://localhost:8787/v1
+[36m   模式: [0m[1mcli[0m[90m  (FAKE_LLM_MODE 可切换 mock|manual|cli)[0m
+[90m   cli: 将调用 [1mcodex[0m (/Applications/Codex.app/Contents/Resources/codex)[0m
+[90m   .env 里 OPENAI_BASE_URL / DEEPSEEK_BASE_URL 应指向上面地址[0m
+

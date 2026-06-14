@@ -1,0 +1,139 @@
+
+> artslave@0.1.0 dev
+> next dev
+
+   ▲ Next.js 15.3.5
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.2.80:3000
+   - Environments: .env
+
+ ✓ Starting...
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack from /Users/liushuai/Documents/Major/Researches/Ferrari-Factory/artslave/.next/cache/webpack/server-development.pack.gz failed: TypeError: Cannot read properties of undefined (reading 'hasStartTime')
+ ✓ Ready in 2.1s
+ ○ Compiling /api/backend-status ...
+ ✓ Compiled /api/backend-status in 2.5s (365 modules)
+ GET /api/backend-status 200 in 2864ms
+ ○ Compiling / ...
+ ✓ Compiled / in 17.5s (998 modules)
+ GET / 200 in 1027646ms
+ ✓ Compiled in 1010.8s (435 modules)
+ GET /api/backend-status 200 in 45ms
+ GET /api/backend-status 200 in 115ms
+ GET /api/backend-status 200 in 52ms
+ GET /api/backend-status 200 in 31ms
+ GET /api/backend-status 200 in 20ms
+ GET /api/backend-status 200 in 21ms
+ GET /api/backend-status 200 in 54ms
+ GET /api/backend-status 200 in 20ms
+ GET /api/backend-status 200 in 48ms
+ GET /api/backend-status 200 in 19ms
+ GET /api/backend-status 200 in 1167ms
+ GET /api/backend-status 200 in 56ms
+ GET /api/backend-status 200 in 67ms
+ GET /api/backend-status 200 in 28ms
+ GET /api/backend-status 200 in 32ms
+ GET /api/backend-status 200 in 22ms
+ GET /api/backend-status 200 in 19ms
+ GET /api/backend-status 200 in 44ms
+ GET /api/backend-status 200 in 14ms
+ GET /api/backend-status 200 in 26ms
+ GET /api/backend-status 200 in 55ms
+ GET /api/backend-status 200 in 14ms
+ GET /api/backend-status 200 in 45ms
+ GET /api/backend-status 200 in 25ms
+ GET /api/backend-status 200 in 10ms
+ GET /api/backend-status 200 in 16ms
+ GET /api/backend-status 200 in 28ms
+ GET /api/backend-status 200 in 9ms
+ GET /api/backend-status 200 in 56ms
+ GET /api/backend-status 200 in 33ms
+ GET /api/backend-status 200 in 27ms
+ GET /api/backend-status 200 in 22ms
+ GET /api/backend-status 200 in 11ms
+ GET /api/backend-status 200 in 38ms
+ GET /api/backend-status 200 in 13ms
+ GET /api/backend-status 200 in 13ms
+ GET /api/backend-status 200 in 26ms
+ GET /api/backend-status 200 in 17ms
+ GET /api/backend-status 200 in 9ms
+ GET /api/backend-status 200 in 10ms
+ GET /api/backend-status 200 in 8ms
+ GET /api/backend-status 200 in 9ms
+ GET /api/backend-status 200 in 9ms
+ GET /api/backend-status 200 in 17ms
+ GET /api/backend-status 200 in 7ms
+ GET /api/backend-status 200 in 22ms
+ GET /api/backend-status 200 in 21ms
+ GET /api/backend-status 200 in 9ms
+ GET /api/backend-status 200 in 12ms
+ GET /api/backend-status 200 in 9ms
+ GET /api/backend-status 200 in 10ms
+ GET /api/backend-status 200 in 9ms
+ GET /api/backend-status 200 in 11ms
+ GET /api/backend-status 200 in 11ms
+ GET /api/backend-status 200 in 10ms
+ GET /api/backend-status 200 in 9ms
+ GET /api/backend-status 200 in 14ms
+ GET /api/backend-status 200 in 10ms
+ GET /api/backend-status 200 in 17ms
+ GET /api/backend-status 200 in 10ms
+ GET /api/backend-status 200 in 32ms
+ GET /api/backend-status 200 in 21ms
+ GET /api/backend-status 200 in 31ms
+ GET /api/backend-status 200 in 13ms
+ GET /api/backend-status 200 in 37ms
+ GET /api/backend-status 200 in 12ms
+ GET /api/backend-status 200 in 21ms
+ GET /api/backend-status 200 in 9ms
+ GET /api/backend-status 200 in 10ms
+ GET /api/backend-status 200 in 30ms
+ GET /api/backend-status 200 in 13ms
+ GET /api/backend-status 200 in 19ms
+ GET /api/backend-status 200 in 18ms
+ GET /api/backend-status 200 in 11ms
+ GET /api/backend-status 200 in 10ms
+ GET /api/backend-status 200 in 12ms
+ GET /api/backend-status 200 in 15ms
+ GET /api/backend-status 200 in 15ms
+ GET /api/backend-status 200 in 11ms
+ GET /api/backend-status 200 in 14ms
+ GET /api/backend-status 200 in 16ms
+ GET /api/backend-status 200 in 9ms
+ GET /api/backend-status 200 in 13ms
+ GET /api/backend-status 200 in 24ms
+ GET /api/backend-status 200 in 13ms
+ GET /api/backend-status 200 in 11ms
+ GET /api/backend-status 200 in 11ms
+ GET /api/backend-status 200 in 11ms
+ GET /api/backend-status 200 in 9ms
+ GET /api/backend-status 200 in 19ms
+ GET /api/backend-status 200 in 15ms
+ GET /api/backend-status 200 in 13ms
+ GET /api/backend-status 200 in 12ms
+ GET /api/backend-status 200 in 23ms
+ GET /api/backend-status 200 in 19ms
+ GET /api/backend-status 200 in 10ms
+ GET /api/backend-status 200 in 15ms
+ GET /api/backend-status 200 in 11ms
+ GET /api/backend-status 200 in 14ms
+ GET /api/backend-status 200 in 18ms
+ GET /api/backend-status 200 in 38ms
+ GET /api/backend-status 200 in 18ms
+ GET /api/backend-status 200 in 18ms
+ GET /api/backend-status 200 in 9ms
+ GET /api/backend-status 200 in 15ms
+ GET /api/backend-status 200 in 15ms
+ GET /api/backend-status 200 in 10ms
+ GET /api/backend-status 200 in 16ms
+ GET /api/backend-status 200 in 13ms
+ GET /api/backend-status 200 in 19ms
+ GET /api/backend-status 200 in 14ms
+ GET /api/backend-status 200 in 12ms
+ GET /api/backend-status 200 in 11ms
+ GET /api/backend-status 200 in 24ms
+ GET /api/backend-status 200 in 36ms
+ GET /api/backend-status 200 in 19ms
+ GET /api/backend-status 200 in 10ms
+ GET /api/backend-status 200 in 19ms
+ GET /api/backend-status 200 in 19ms
+ GET /api/backend-status 200 in 11ms
