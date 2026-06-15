@@ -100,3 +100,91 @@ Error: getaddrinfo ENOTFOUND api.n8n.io
 
 Error fetching from Strapi API (https://api.n8n.io/api/mcp-servers): getaddrinfo ENOTFOUND api.n8n.io
 Failed to refresh MCP registry
+Pruning old insights data
+socket hang up
+Error: socket hang up
+    at Function.from (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/axios/lib/core/AxiosError.js:77:24)
+    at RedirectableRequest.handleRequestError (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/axios/lib/adapters/http.js:1161:27)
+    at RedirectableRequest.emit (node:events:531:35)
+    at ClientRequest.eventHandlers.<computed> (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/follow-redirects/index.js:56:24)
+    at ClientRequest.emit (node:events:519:28)
+    at emitErrorEvent (node:_http_client:108:11)
+    at TLSSocket.socketOnEnd (node:_http_client:599:5)
+    at TLSSocket.emit (node:events:531:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at processTicksAndRejections (node:internal/process/task_queues:89:21)
+    at Axios.request (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/axios/lib/core/Axios.js:46:41)
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at paginatedRequest (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/utils/strapi-utils.ts:57:15)
+    at McpRegistryApiClient.fetchServersMetadata (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/modules/mcp-registry/registry/mcp-registry-api.client.ts:30:10)
+    at McpRegistryService.refreshUpdatedServers (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/modules/mcp-registry/registry/mcp-registry.service.ts:160:20)
+    at McpRegistryService.refreshFromApiInternal (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/modules/mcp-registry/registry/mcp-registry.service.ts:133:20)
+    at McpRegistryService.refreshFromApi (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/modules/mcp-registry/registry/mcp-registry.service.ts:120:4)
+
+socket hang up
+Error: socket hang up
+    at TLSSocket.socketOnEnd (node:_http_client:599:25)
+    at TLSSocket.emit (node:events:531:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at processTicksAndRejections (node:internal/process/task_queues:89:21)
+
+Error fetching from Strapi API (https://api.n8n.io/api/mcp-servers): socket hang up
+Failed to refresh MCP registry
+socket hang up
+Error: socket hang up
+    at Function.from (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/axios/lib/core/AxiosError.js:77:24)
+    at RedirectableRequest.handleRequestError (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/axios/lib/adapters/http.js:1161:27)
+    at RedirectableRequest.emit (node:events:531:35)
+    at ClientRequest.eventHandlers.<computed> (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/follow-redirects/index.js:56:24)
+    at ClientRequest.emit (node:events:519:28)
+    at emitErrorEvent (node:_http_client:108:11)
+    at TLSSocket.socketOnEnd (node:_http_client:599:5)
+    at TLSSocket.emit (node:events:531:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at processTicksAndRejections (node:internal/process/task_queues:89:21)
+    at Axios.request (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/axios/lib/core/Axios.js:46:41)
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at paginatedRequest (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/utils/strapi-utils.ts:57:15)
+    at McpRegistryApiClient.fetchServersMetadata (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/modules/mcp-registry/registry/mcp-registry-api.client.ts:30:10)
+    at McpRegistryService.refreshUpdatedServers (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/modules/mcp-registry/registry/mcp-registry.service.ts:160:20)
+    at McpRegistryService.refreshFromApiInternal (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/modules/mcp-registry/registry/mcp-registry.service.ts:133:20)
+    at McpRegistryService.refreshFromApi (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/modules/mcp-registry/registry/mcp-registry.service.ts:120:4)
+
+socket hang up
+Error: socket hang up
+    at TLSSocket.socketOnEnd (node:_http_client:599:25)
+    at TLSSocket.emit (node:events:531:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at processTicksAndRejections (node:internal/process/task_queues:89:21)
+
+Error fetching from Strapi API (https://api.n8n.io/api/mcp-servers): socket hang up
+Failed to refresh MCP registry
+socket hang up
+Error: socket hang up
+    at Function.from (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/axios/lib/core/AxiosError.js:77:24)
+    at RedirectableRequest.handleRequestError (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/axios/lib/adapters/http.js:1161:27)
+    at RedirectableRequest.emit (node:events:531:35)
+    at ClientRequest.eventHandlers.<computed> (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/follow-redirects/index.js:56:24)
+    at ClientRequest.emit (node:events:519:28)
+    at emitErrorEvent (node:_http_client:108:11)
+    at TLSSocket.socketOnEnd (node:_http_client:599:5)
+    at TLSSocket.emit (node:events:531:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at processTicksAndRejections (node:internal/process/task_queues:89:21)
+    at Axios.request (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/axios/lib/core/Axios.js:46:41)
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at paginatedRequest (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/utils/strapi-utils.ts:57:15)
+    at McpRegistryApiClient.fetchServersMetadata (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/modules/mcp-registry/registry/mcp-registry-api.client.ts:30:10)
+    at McpRegistryService.refreshUpdatedServers (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/modules/mcp-registry/registry/mcp-registry.service.ts:160:20)
+    at McpRegistryService.refreshFromApiInternal (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/modules/mcp-registry/registry/mcp-registry.service.ts:133:20)
+    at McpRegistryService.refreshFromApi (/Users/liushuai/.npm/_npx/a8a7eec953f1f314/node_modules/n8n/src/modules/mcp-registry/registry/mcp-registry.service.ts:120:4)
+
+socket hang up
+Error: socket hang up
+    at TLSSocket.socketOnEnd (node:_http_client:599:25)
+    at TLSSocket.emit (node:events:531:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at processTicksAndRejections (node:internal/process/task_queues:89:21)
+
+Error fetching from Strapi API (https://api.n8n.io/api/mcp-servers): socket hang up
+Failed to refresh MCP registry

@@ -368,6 +368,7 @@ model GraphRun {
   seedType    String // 种子类型: artist|exhibition|institution|curator|movement|location
   seedUrl     String? // 爬取模式：起始网址(列表/目录页，自动翻页抓取真实内容)
   seedUrls      String? // 爬取模式：多个起始链接(JSON 数组)
+  seedNodes     String? // 定点深挖模式：从已有节点出发的种子列表 [{name,type}] (JSON 数组)
   crawlPageMode String? @default("auto") // auto | fixed — 翻页策略
   crawlPages    Int? // fixed: 目标页数; auto: 安全上限(解析到末页前最多抓多少页)
   status      String    @default("pending") // pending|running|completed|failed|stopped

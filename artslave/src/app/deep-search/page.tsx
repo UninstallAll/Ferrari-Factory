@@ -10,6 +10,19 @@ import { Search, Play, Square, Loader2, Type, Link2, Upload, FileText, ImageIcon
 import AppHeader from '@/components/AppHeader'
 import { useLocale } from '@/contexts/LocaleContext'
 
+interface EntityIdentity {
+  wikidataId?: string
+  label?: string
+  description?: string
+  birthYear?: number | null
+  deathYear?: number | null
+  country?: string | null
+  occupations?: string[]
+  aliases?: string[]
+  url?: string
+  score?: number
+}
+
 interface ApiNode {
   key: string
   name: string
@@ -20,7 +33,7 @@ interface ApiNode {
   pagerank: number
   degree: number
   discoveryCount: number
-  data: { year?: number | null; evidence?: string | null; sourceUrl?: string | null; runCount?: number } | null
+  data: { year?: number | null; evidence?: string | null; sourceUrl?: string | null; runCount?: number; wikidataId?: string | null; identity?: EntityIdentity | null } | null
 }
 interface ApiEdge {
   sourceKey: string
@@ -492,6 +505,16 @@ interface ResolvedSeed {
   seedType: string
   summary: string
   source: string
+  identity?: EntityIdentity | null
+  searchTerms?: string[]
+}
+interface PrecheckState {
+  normalizedName: string
+  type: string
+  confidence: number
+  candidates: EntityIdentity[]
+  searchTerms: string[]
+  disambiguation: string[]
 }
 
 function readFile(file: File): Promise<{ dataUrl: string; text: string }> {
@@ -526,6 +549,8 @@ export default function DeepSearchPage() {
   const [resolving, setResolving] = useState(false)
   const [resolveError, setResolveError] = useState<string | null>(null)
   const [resolvedSeed, setResolvedSeed] = useState<ResolvedSeed | null>(null)
+  const [prechecking, setPrechecking] = useState(false)
+  const [precheck, setPrecheck] = useState<PrecheckState | null>(null)
   const lastSigRef = useRef<string>('')
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -534,6 +559,12 @@ export default function DeepSearchPage() {
   const [apiNodes, setApiNodes] = useState<ApiNode[]>([])
   const [apiEdges, setApiEdges] = useState<ApiEdge[]>([])
   const [selected, setSelected] = useState<ApiNode | null>(null)
+  // 定点深挖：累积选中的种子节点(name+type)，从这些点继续向下深搜
+  const [seedQueue, setSeedQueue] = useState<{ name: string; type: string; identity?: EntityIdentity | null }[]>([])
+  // 悬浮联动（双向）：分两个独立状态，避免互相触发导致闪动
+  const [graphHoveredKey, setGraphHoveredKey] = useState<string | null>(null)     // 鼠标在图谱节点上
+  const [sidebarHoveredKey, setSidebarHoveredKey] = useState<string | null>(null) // 鼠标在右侧排行行上
+  const rankItemRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const fetchHistoryRef = useRef<(() => void) | null>(null)
 
@@ -749,6 +780,19 @@ export default function DeepSearchPage() {
     if (sig === lastSigRef.current && resolvedSeed) {
       return { ...resolvedSeed, seedType }
     }
+    if (inputMode === 'text' && precheck && precheck.confidence >= 0.72) {
+      const seed: ResolvedSeed = {
+        seedName: precheck.normalizedName,
+        seedType: seedType || precheck.type,
+        summary: precheck.candidates[0]?.description || 'Wikidata identity match',
+        source: 'text',
+        identity: precheck.candidates[0] || null,
+        searchTerms: precheck.searchTerms,
+      }
+      setResolvedSeed(seed)
+      lastSigRef.current = sig
+      return seed
+    }
     setResolving(true)
     setResolveError(null)
     try {
@@ -847,10 +891,69 @@ export default function DeepSearchPage() {
     pollRef.current = setInterval(() => poll(data.runId), 2500)
   }
 
+  // 是否已在深挖队列中
+  const inSeedQueue = useCallback(
+    (n: { name: string; type: string }) =>
+      seedQueue.some((s) => s.type === n.type && s.name.toLowerCase() === n.name.toLowerCase()),
+    [seedQueue]
+  )
+
+  // 加入/移出深挖队列(切换)
+  const toggleSeedQueue = useCallback((n: { name: string; type: string; data?: ApiNode['data'] }) => {
+    setSeedQueue((q) => {
+      const exists = q.some((s) => s.type === n.type && s.name.toLowerCase() === n.name.toLowerCase())
+      return exists
+        ? q.filter((s) => !(s.type === n.type && s.name.toLowerCase() === n.name.toLowerCase()))
+        : [...q, { name: n.name, type: n.type, identity: n.data?.identity || null }]
+    })
+  }, [])
+
+  // 定点深挖：从给定的若干现有节点出发，按名字检索真实资料继续向下深搜(核实后归档)
+  const startAnchored = async (seeds: { name: string; type: string; identity?: EntityIdentity | null }[]) => {
+    const list = seeds
+      .map((s) => ({ name: String(s.name || '').trim(), type: String(s.type || '').trim() }))
+      .filter((s) => s.name && s.type)
+    if (!list.length) return
+    setResolveError(null)
+    stopPolling()
+    setViewMode('run')
+    setApiNodes([])
+    setApiEdges([])
+    setSelected(null)
+    setRankDetailOpen(false)
+    setDetailPinned(false)
+    setLogs([])
+    setConsoleOpen(true)
+    const label = `定点深挖：${list.slice(0, 3).map((s) => s.name).join('、')}${list.length > 3 ? ` 等 ${list.length} 点` : ''}`
+    let data: any
+    try {
+      const res = await fetch('/api/deep-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seedNodes: list, maxDepth, maxPerLevel }),
+      })
+      data = await res.json()
+    } catch (e) {
+      setResolveError('启动失败: ' + (e instanceof Error ? e.message : String(e)))
+      return
+    }
+    if (!data?.success) {
+      setResolveError('启动失败: ' + (data?.error || '未知错误'))
+      return
+    }
+    setSeedQueue([])
+    setRunId(data.runId)
+    setRun({ id: data.runId, seedName: label, seedType: list[0].type, status: 'pending', progress: 0, message: '启动中…', nodeCount: 0, edgeCount: 0 })
+    fetchHistory()
+    poll(data.runId)
+    pollRef.current = setInterval(() => poll(data.runId), 2500)
+  }
+
   const pickFile = (f: File | null) => {
     setFile(f)
     setInputModeOverride(null)
     setResolvedSeed(null)
+    setPrecheck(null)
     lastSigRef.current = ''
     setResolveError(null)
   }
@@ -859,6 +962,7 @@ export default function DeepSearchPage() {
     setSeedInput(value)
     setInputModeOverride(null)
     setResolvedSeed(null)
+    setPrecheck(null)
     lastSigRef.current = ''
   }
 
@@ -873,6 +977,51 @@ export default function DeepSearchPage() {
   }
 
   useEffect(() => {
+    if (inputMode !== 'text') {
+      setPrecheck(null)
+      setPrechecking(false)
+      return
+    }
+    const query = seedInput.trim()
+    if (query.length < 2 || query.length > 120) {
+      setPrecheck(null)
+      setPrechecking(false)
+      return
+    }
+    const controller = new AbortController()
+    const timer = setTimeout(async () => {
+      setPrechecking(true)
+      try {
+        const res = await fetch('/api/deep-search/precheck', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, typeHint: seedType }),
+          signal: controller.signal,
+        })
+        const data = await res.json()
+        if (data.success) {
+          setPrecheck({
+            normalizedName: data.normalizedName,
+            type: data.type,
+            confidence: data.confidence,
+            candidates: data.candidates || [],
+            searchTerms: data.searchTerms || [],
+            disambiguation: data.disambiguation || [],
+          })
+        }
+      } catch (e) {
+        if (!controller.signal.aborted) console.error(e)
+      } finally {
+        if (!controller.signal.aborted) setPrechecking(false)
+      }
+    }, 450)
+    return () => {
+      controller.abort()
+      clearTimeout(timer)
+    }
+  }, [inputMode, seedInput, seedType])
+
+  useEffect(() => {
     fetchHistory()
     return () => stopPolling()
   }, [fetchHistory])
@@ -880,6 +1029,21 @@ export default function DeepSearchPage() {
   useEffect(() => {
     if (consoleOpen) logEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [logs, consoleOpen])
+
+  // 图谱节点悬停时，右侧排行榜对应条目滚动到可见区域
+  useEffect(() => {
+    if (!graphHoveredKey) return
+    rankItemRefs.current.get(graphHoveredKey)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [graphHoveredKey])
+
+  // 右侧列表悬停时，图谱镜头平滑飞到对应节点并居中（防抖 400ms，鼠标停稳后才飞，避免快速划过时乱跳）
+  useEffect(() => {
+    if (!sidebarHoveredKey) return
+    const timer = setTimeout(() => {
+      rfInstanceRef.current?.fitView({ nodes: [{ id: sidebarHoveredKey }], duration: 350, padding: 0.4 })
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [sidebarHoveredKey])
 
   // ---------- 筛选 ----------
   // 数据里实际出现的类型/关系/最大深度(用于生成筛选项 + 计数)
@@ -1079,11 +1243,12 @@ export default function DeepSearchPage() {
           selected: isSel,
           matched: searching && isMatch && !isSel,
           related: focusing && inFocus && !isSel && !(searching && isMatch),
+          hovered: sidebarHoveredKey === n.key && !isSel,
           dim,
         },
       }
     })
-  }, [renderNodes, filteredNodes, filteredEdges, selected, relatedKeys, matchedKeys, nodeSizeScale, layoutMode, livePhysics])
+  }, [renderNodes, filteredNodes, filteredEdges, selected, relatedKeys, matchedKeys, sidebarHoveredKey, nodeSizeScale, layoutMode, livePhysics])
 
   // 简洁优雅的连线：默认极细浅灰、无箭头无文字；只有选中节点的相连边才加粗高亮 + 显示关系标签
   const flowEdges: Edge[] = useMemo(
@@ -1497,6 +1662,28 @@ export default function DeepSearchPage() {
                 <span className="w-2 h-2 rounded-full" style={{ background: TYPE_COLORS[resolvedSeed.seedType] || '#64748b' }} />
                 <span className="text-slate-500">{TYPE_LABELS[resolvedSeed.seedType] || resolvedSeed.seedType}</span>
                 {resolvedSeed.summary && <span className="text-slate-400 truncate max-w-[420px]">· {resolvedSeed.summary}</span>}
+              </div>
+            )}
+            {!resolvedSeed && !resolveError && inputMode === 'text' && (prechecking || precheck) && (
+              <div className="mt-2 flex items-center gap-2 flex-wrap text-xs">
+                <span className="flex items-center gap-1 text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5">
+                  {prechecking ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                  查询预检测
+                </span>
+                {precheck && (
+                  <>
+                    <b className="text-slate-900">{precheck.normalizedName}</b>
+                    <span className="w-2 h-2 rounded-full" style={{ background: TYPE_COLORS[precheck.type] || '#64748b' }} />
+                    <span className="text-slate-500">{TYPE_LABELS[precheck.type] || precheck.type}</span>
+                    <span className="text-slate-400">置信度 {(precheck.confidence * 100).toFixed(0)}%</span>
+                    {precheck.candidates.length > 1 && <span className="text-amber-600">候选 {precheck.candidates.length} 个</span>}
+                    {precheck.searchTerms.slice(0, 3).map((term) => (
+                      <span key={term} className="rounded-full bg-slate-100 text-slate-500 px-2 py-0.5 max-w-[180px] truncate">
+                        {term}
+                      </span>
+                    ))}
+                  </>
+                )}
               </div>
             )}
             {resolveError && (
@@ -2013,6 +2200,8 @@ export default function DeepSearchPage() {
             onNodeDrag={onNodeDrag}
             onNodeDragStop={onNodeDragStop}
             onPaneClick={() => { setSelected(null); setRankDetailOpen(false); setDetailPinned(false); setShowLayoutMenu(false) }}
+            onNodeMouseEnter={(_, node) => setGraphHoveredKey(node.id)}
+            onNodeMouseLeave={() => setGraphHoveredKey(null)}
             onInit={(inst) => { rfInstanceRef.current = inst }}
             fitView
             minZoom={0.15}
@@ -2175,16 +2364,48 @@ export default function DeepSearchPage() {
                   {selected.data?.evidence && (
                     <p className="text-xs text-slate-500 mt-3 leading-relaxed">{selected.data.evidence}</p>
                   )}
-                  {selected.data?.sourceUrl && (
-                    <a
-                      href={selected.data.sourceUrl}
+	                  {selected.data?.sourceUrl && (
+	                    <a
+	                      href={selected.data.sourceUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="mt-2 inline-flex items-center gap-1 text-xs text-blue-600 hover:underline break-all"
                     >
-                      <Link2 className="w-3 h-3 shrink-0" /> 来源 · 可核验
-                    </a>
-                  )}
+	                      <Link2 className="w-3 h-3 shrink-0" /> 来源 · 可核验
+	                    </a>
+	                  )}
+	                  {selected.data?.identity?.wikidataId && (
+	                    <a
+	                      href={selected.data.identity.url || `https://www.wikidata.org/wiki/${selected.data.identity.wikidataId}`}
+	                      target="_blank"
+	                      rel="noopener noreferrer"
+	                      className="mt-2 ml-2 inline-flex items-center gap-1 text-xs text-violet-600 hover:underline"
+	                    >
+	                      <Atom className="w-3 h-3 shrink-0" /> {selected.data.identity.wikidataId}
+	                    </a>
+	                  )}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => startAnchored([{ name: selected.name, type: selected.type, identity: selected.data?.identity || null }])}
+                      disabled={running}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="以此节点为起点，联网检索真实资料继续向下深挖(核实后归档)"
+                    >
+                      <Target className="w-3.5 h-3.5" /> 从此节点深挖
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleSeedQueue({ name: selected.name, type: selected.type, data: selected.data })}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                        inSeedQueue(selected)
+                          ? 'border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                          : 'border-slate-300 text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {inSeedQueue(selected) ? '✓ 已加入队列' : '＋ 加入深挖队列'}
+                    </button>
+                  </div>
                 </div>
               )}
               <div className="p-3">
@@ -2194,10 +2415,17 @@ export default function DeepSearchPage() {
                     return (
                       <button
                         key={n.key}
+                        ref={(el) => { if (el) rankItemRefs.current.set(n.key, el); else rankItemRefs.current.delete(n.key) }}
                         onClick={() => { setSelected(n); setRankDetailOpen(true) }}
                         onDoubleClick={() => rfInstanceRef.current?.fitView({ nodes: [{ id: n.key }], duration: 400, padding: 0.35 })}
+                        onMouseEnter={() => setSidebarHoveredKey(n.key)}
+                        onMouseLeave={() => setSidebarHoveredKey(null)}
                         className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${
-                          selected?.key === n.key ? 'bg-slate-100 ring-1 ring-slate-300' : 'hover:bg-slate-100'
+                          selected?.key === n.key
+                            ? 'bg-slate-100 ring-1 ring-slate-300'
+                            : graphHoveredKey === n.key
+                              ? 'bg-indigo-50 ring-1 ring-indigo-300'
+                              : 'hover:bg-slate-100'
                         }`}
                       >
                         <span className="text-xs text-slate-400 w-5 shrink-0">{i + 1}</span>
@@ -2228,6 +2456,33 @@ export default function DeepSearchPage() {
       </div>
 
       {/* 实时进程控制台(像 Cursor 那样看每一步) */}
+      {seedQueue.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-full bg-slate-900 text-white shadow-2xl ring-1 ring-white/10">
+          <Target className="w-4 h-4 text-blue-400 shrink-0" />
+          <span className="text-sm shrink-0">
+            深挖队列 <b className="tabular-nums">{seedQueue.length}</b> 点
+          </span>
+          <span className="hidden sm:inline text-xs text-slate-400 max-w-[260px] truncate">
+            {seedQueue.map((s) => s.name).join('、')}
+          </span>
+          <button
+            type="button"
+            onClick={() => startAnchored(seedQueue)}
+            disabled={running}
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-medium bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          >
+            <Search className="w-3.5 h-3.5" /> 从这些节点深挖
+          </button>
+          <button
+            type="button"
+            onClick={() => setSeedQueue([])}
+            className="p-1 rounded-full text-slate-400 hover:text-white hover:bg-white/10 shrink-0"
+            title="清空队列"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
       <div className="border-t-2 border-slate-800 bg-slate-900 text-slate-100 shrink-0">
         <button
           onClick={() => setConsoleOpen((v) => !v)}

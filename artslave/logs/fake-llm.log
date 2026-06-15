@@ -10,3 +10,7 @@
 [90m   .env 里 OPENAI_BASE_URL / DEEPSEEK_BASE_URL 应指向上面地址[0m
 
 [36m[fake-llm][0m #1 [1mcli[0m 模式  model=gpt-4o-mini  28 chars
+[36m[fake-llm][0m #2 [1mcli[0m 模式  model=deepseek-chat  3996 chars
+[36m[fake-llm][0m #3 [1mcli[0m 模式  model=deepseek-chat  10831 chars
+[36m[fake-llm][0m #4 [1mcli[0m 模式  model=deepseek-chat  13270 chars
+[36m[fake-llm][0m #5 [1mcli[0m 模式  model=deepseek-chat  13270 chars

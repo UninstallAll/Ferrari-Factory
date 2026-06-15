@@ -2,7 +2,8 @@
 // 走 OpenAI 兼容接口(当前指向本地假 API → Codex，支持视觉)
 
 import OpenAI from 'openai'
-import { NodeType, NODE_TYPES } from './types'
+import { EntityIdentity, NodeType, NODE_TYPES } from './types'
+import { precheckQuery, type QueryPrecheck } from './precheck'
 
 export type ResolveInput =
   | { kind: 'text'; text: string }
@@ -15,6 +16,9 @@ export interface ResolvedSeed {
   seedType: NodeType
   summary: string
   source: ResolveInput['kind']
+  identity?: EntityIdentity | null
+  precheck?: QueryPrecheck
+  searchTerms?: string[]
 }
 
 function getClient(): OpenAI {
@@ -125,11 +129,22 @@ async function resolveText(content: string, extra: string, source: ResolveInput[
   })
   const parsed = extractJson(completion.choices?.[0]?.message?.content || '')
   if (!parsed || !parsed.name) throw new Error('无法从内容中识别出实体')
+  const seedType = normalizeType(parsed.type)
+  let precheck: QueryPrecheck | undefined
+  try {
+    precheck = await precheckQuery(String(parsed.name).trim(), seedType)
+  } catch {
+    precheck = undefined
+  }
+  const identity = precheck?.candidates?.[0] || null
   return {
     seedName: String(parsed.name).trim(),
-    seedType: normalizeType(parsed.type),
+    seedType,
     summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
     source,
+    identity,
+    precheck,
+    searchTerms: precheck?.searchTerms || [],
   }
 }
 
@@ -153,11 +168,22 @@ async function resolveImage(dataUrl: string): Promise<ResolvedSeed> {
   })
   const parsed = extractJson(completion.choices?.[0]?.message?.content || '')
   if (!parsed || !parsed.name) throw new Error('无法从图片中识别出实体')
+  const seedType = normalizeType(parsed.type)
+  let precheck: QueryPrecheck | undefined
+  try {
+    precheck = await precheckQuery(String(parsed.name).trim(), seedType)
+  } catch {
+    precheck = undefined
+  }
+  const identity = precheck?.candidates?.[0] || null
   return {
     seedName: String(parsed.name).trim(),
-    seedType: normalizeType(parsed.type),
+    seedType,
     summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
     source: 'image',
+    identity,
+    precheck,
+    searchTerms: precheck?.searchTerms || [],
   }
 }
 
@@ -166,6 +192,26 @@ export async function resolveSeed(input: ResolveInput): Promise<ResolvedSeed> {
     case 'text': {
       const t = (input.text || '').trim()
       if (!t) throw new Error('文本为空')
+      // 短文本通常就是实体名：先做免 key 预检测，强命中时直接返回，减少 LLM 延迟与重名误判。
+      if (t.length <= 80) {
+        try {
+          const precheck = await precheckQuery(t)
+          const best = precheck.candidates[0]
+          if (best && precheck.confidence >= 0.72) {
+            return {
+              seedName: best.label || precheck.normalizedName,
+              seedType: precheck.type,
+              summary: best.description || 'Wikidata identity match',
+              source: 'text',
+              identity: best,
+              precheck,
+              searchTerms: precheck.searchTerms,
+            }
+          }
+        } catch {
+          /* 预检测失败则回退 LLM */
+        }
+      }
       // 纯名字也走一次 LLM，拿到规范名 + 自动判别类型
       return resolveText(t, '内容是用户直接输入的实体名或一句描述。', 'text')
     }

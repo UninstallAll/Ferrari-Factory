@@ -38,6 +38,11 @@ if (typeof window !== 'undefined') {
     writable: true,
     value: jest.fn(),
   })
+
+  Object.defineProperty(window.HTMLElement.prototype, 'scrollTo', {
+    writable: true,
+    value: jest.fn(),
+  })
 }
 
 // Mock localStorage

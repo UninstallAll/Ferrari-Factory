@@ -48,6 +48,20 @@ export interface ExpansionResult {
   neighbors: Neighbor[]
   docCount?: number // 本次命中的真实资料篇数
   sources?: { title: string; url: string }[] // 本次使用的真实资料出处
+  identity?: EntityIdentity | null
+}
+
+export interface EntityIdentity {
+  wikidataId?: string
+  label?: string
+  description?: string
+  birthYear?: number | null
+  deathYear?: number | null
+  country?: string | null
+  occupations?: string[]
+  aliases?: string[]
+  url?: string
+  score?: number
 }
 
 // 内存中的图结构(引擎运行时用)
@@ -62,6 +76,7 @@ export interface GraphNodeData {
   year?: number | null
   evidence?: string
   sourceUrl?: string | null // 首次发现该节点时的真实出处
+  identity?: EntityIdentity | null
   // 以下为后处理计算
   degree: number
   pagerank: number
@@ -92,7 +107,30 @@ export const DEFAULT_SEARCH_CONFIG: SearchConfig = {
 }
 
 // 生成规范去重键
-export function canonicalKey(type: string, name: string): string {
+export function slugName(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '') // 去重音
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '_') // 非字母数字中文→_
+    .replace(/^_+|_+$/g, '')
+}
+
+// 生成规范去重键。若带 Wikidata/生卒年/国籍等身份信息，则纳入消歧符，避免同名实体被错误合并。
+export function canonicalKey(type: string, name: string, identity?: EntityIdentity | null): string {
+  const slug = slugName(name)
+  const suffixParts: string[] = []
+  if (identity?.wikidataId) {
+    suffixParts.push(identity.wikidataId.toLowerCase())
+  } else {
+    if (identity?.birthYear != null) suffixParts.push(`b${identity.birthYear}`)
+    if (identity?.deathYear != null) suffixParts.push(`d${identity.deathYear}`)
+    if (identity?.country) suffixParts.push(slugName(identity.country))
+  }
+  return `${type}:${suffixParts.length ? `${slug}__${suffixParts.join('_')}` : slug}`
+}
+
+export function canonicalKeyBase(type: string, name: string): string {
   const slug = name
     .toLowerCase()
     .normalize('NFKD')

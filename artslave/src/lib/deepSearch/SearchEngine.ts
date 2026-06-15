@@ -8,7 +8,6 @@ import {
   SearchProgressCallback,
   SearchEventCallback,
   RelevanceFactors,
-  DeepSearchError,
   NodeType,
   EdgeType
 } from './types'

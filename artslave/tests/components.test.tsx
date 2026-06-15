@@ -7,6 +7,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { AuthProvider } from '@/contexts/AuthContext';
+import { LocaleProvider } from '@/contexts/LocaleContext';
 import HomePage from '@/app/page';
 import SubmissionsPage from '@/app/submissions/page';
 import DataCollectionPage from '@/app/data-collection/page';
@@ -33,9 +34,11 @@ jest.mock('next/navigation', () => ({
 const renderWithTheme = (component: React.ReactElement) => {
   return render(
     <AuthProvider>
-      <ThemeProvider>
-        {component}
-      </ThemeProvider>
+      <LocaleProvider>
+        <ThemeProvider>
+          {component}
+        </ThemeProvider>
+      </LocaleProvider>
     </AuthProvider>
   );
 };
@@ -418,10 +421,10 @@ describe('Utility Functions', () => {
   test('formatDeadline function', () => {
     const { formatDeadline } = require('@/lib/utils');
     
-    const testDate = '2025-12-31';
+    const testDate = '2027-12-31';
     const result = formatDeadline(testDate);
     
-    expect(result).toContain('2025');
+    expect(result).toContain('2027');
     expect(result).toContain('12');
     expect(result).toContain('31');
   });

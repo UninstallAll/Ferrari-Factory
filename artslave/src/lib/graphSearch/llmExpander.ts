@@ -8,11 +8,13 @@ import { retrieveContext, RetrievedDoc } from './retriever'
 import {
   Neighbor,
   ExpansionResult,
+  EntityIdentity,
   NodeType,
   RelationType,
   NODE_TYPES,
   RELATION_TYPES,
 } from './types'
+import { identifyEntity } from './identity'
 
 const TYPE_LABELS: Record<string, string> = {
   artist: '艺术家',
@@ -70,6 +72,17 @@ function buildPrompt(name: string, type: string, maxNeighbors: number, context: 
 ${context}`
 }
 
+function identityLine(identity?: EntityIdentity | null): string {
+  if (!identity) return ''
+  return [
+    identity.wikidataId ? `Wikidata: ${identity.wikidataId}` : '',
+    identity.birthYear != null ? `born: ${identity.birthYear}` : '',
+    identity.deathYear != null ? `died: ${identity.deathYear}` : '',
+    identity.country ? `country: ${identity.country}` : '',
+    identity.description ? `description: ${identity.description}` : '',
+  ].filter(Boolean).join('; ')
+}
+
 export function normalizeType(t: string): NodeType | null {
   const k = String(t || '').toLowerCase().trim()
   return (NODE_TYPES as string[]).includes(k) ? (k as NodeType) : null
@@ -120,15 +133,19 @@ export async function expandEntity(
   type: string,
   maxNeighbors: number
 ): Promise<ExpansionResult> {
+  const normalizedType = normalizeType(type) || 'artist'
+  const identity = await identifyEntity(name, normalizedType).catch(() => null)
+  const retrievalQuery = identity?.searchTerms?.[0] || identity?.label || name
   // 1) 检索真实资料
-  const docs = await retrieveContext(name)
+  const docs = await retrieveContext(retrievalQuery)
   if (!docs.length) {
     // 没有真实资料：宁可不扩展，也不编造
-    return { canonical: name, neighbors: [], docCount: 0, sources: [] }
+    return { canonical: identity?.label || name, neighbors: [], docCount: 0, sources: [], identity }
   }
 
   const sources = docs.map((d) => ({ title: d.title, url: d.url }))
-  const context = buildContext(docs)
+  const idLine = identityLine(identity)
+  const context = `${idLine ? `【身份预检】${idLine}\n\n` : ''}${buildContext(docs)}`
 
   // 2) 让 LLM 只从真实资料抽取
   const client = getClient()
@@ -145,7 +162,7 @@ export async function expandEntity(
   const raw = completion.choices?.[0]?.message?.content || ''
   const parsed = extractJson(raw)
   if (!parsed || !Array.isArray(parsed.neighbors)) {
-    return { canonical: name, neighbors: [], docCount: docs.length, sources }
+    return { canonical: identity?.label || name, neighbors: [], docCount: docs.length, sources, identity }
   }
 
   const neighbors: Neighbor[] = []
@@ -177,9 +194,10 @@ export async function expandEntity(
 
   return {
     canonical:
-      typeof parsed.canonical === 'string' && parsed.canonical.trim() ? parsed.canonical.trim() : name,
+      typeof parsed.canonical === 'string' && parsed.canonical.trim() ? parsed.canonical.trim() : identity?.label || name,
     neighbors: neighbors.slice(0, maxNeighbors),
     docCount: docs.length,
     sources,
+    identity,
   }
 }

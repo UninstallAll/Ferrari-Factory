@@ -14,6 +14,9 @@ import {
   buildSkeleton,
   type ExtractionRecipe,
 } from '@/lib/graphSearch/recipe'
+import { canonicalKey } from '@/lib/graphSearch/types'
+import { compareEntries } from '@/lib/graphSearch/identity'
+import { parseSeedNodes } from '@/lib/graphSearch/engine'
 
 describe('structured.ts — JSON-LD 直采', () => {
   it('解析 schema.org Person/Organization 并抽出关系', () => {
@@ -125,5 +128,36 @@ describe('render.ts — shouldRenderWithJs 判定', () => {
     const structured = harvestStructured($, 'https://j.com')
     expect(structured.entities.length).toBeGreaterThanOrEqual(3)
     expect(shouldRenderWithJs(html, $, structured)).toBe(false)
+  })
+})
+
+describe('identity disambiguation — 离线去重规则', () => {
+  it('canonicalKey 把 Wikidata QID 纳入消歧符，避免重名合并', () => {
+    expect(canonicalKey('artist', 'John Smith', { wikidataId: 'Q1' }))
+      .toBe('artist:john_smith__q1')
+    expect(canonicalKey('artist', 'John Smith', { wikidataId: 'Q2' }))
+      .toBe('artist:john_smith__q2')
+  })
+
+  it('canonicalKey 无 QID 时用生卒年/国籍作为次级消歧', () => {
+    expect(canonicalKey('artist', 'Zhang Wei', { birthYear: 1952, country: 'China' }))
+      .toBe('artist:zhang_wei__b1952_china')
+  })
+
+  it('compareEntries 用 QID 或生卒年判断词条是否同一身份', () => {
+    expect(compareEntries({ wikidataId: 'Q42' }, { wikidataId: 'Q42' }).sameIdentity).toBe(true)
+    expect(compareEntries({ wikidataId: 'Q42' }, { wikidataId: 'Q43' }).sameIdentity).toBe(false)
+    expect(compareEntries({ birthYear: 1881, deathYear: 1973, country: 'Spain' }, { birthYear: 1881, deathYear: 1973, country: 'Spain' }).sameIdentity).toBe(true)
+  })
+
+  it('parseSeedNodes 保留前端传入的 identity，并过滤非法类型', () => {
+    const nodes = parseSeedNodes({
+      seedNodes: JSON.stringify([
+        { name: 'Pablo Picasso', type: 'artist', identity: { wikidataId: 'Q5593', birthYear: 1881 } },
+        { name: 'Bad Type', type: 'unknown' },
+      ]),
+    })
+    expect(nodes).toHaveLength(1)
+    expect(nodes[0].identity?.wikidataId).toBe('Q5593')
   })
 })

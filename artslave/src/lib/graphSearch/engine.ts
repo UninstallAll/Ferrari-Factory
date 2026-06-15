@@ -12,11 +12,15 @@ import { getOrInferRecipe, saveRecipe, recordsToGraph } from './recipe'
 import type { FetchedPage } from './render'
 import { verifyNeighbor } from './verifier'
 import { computeImportance } from './importance'
+import { identifyEntity } from './identity'
 import {
   GraphNodeData,
   GraphEdgeData,
   SearchConfig,
   RelationType,
+  NodeType,
+  EntityIdentity,
+  NODE_TYPES,
   canonicalKey,
 } from './types'
 
@@ -50,8 +54,20 @@ export async function runDeepSearch(runId: string): Promise<void> {
   const crawlMode = !!run.seedUrl || !!run.seedUrls
   const provider = (process.env.RETRIEVAL_PROVIDER || 'wikipedia').toLowerCase()
 
+  // 定点深挖模式：从用户选中的若干现有节点出发(与爬取模式互斥)
+  const seedNodesInput = crawlMode ? [] : parseSeedNodes(run)
+  const nodeAnchored = seedNodesInput.length > 0
+  // 第 0 层要扩展的节点数：定点深挖时展开全部起点(限 12 个)，否则单种子=1
+  const level0Expand = nodeAnchored ? Math.max(1, Math.min(seedNodesInput.length, 12)) : 1
+
   const nodes = new Map<string, GraphNodeData>()
   const edges = new Map<string, GraphEdgeData>()
+  const identityCache = new Map<string, Promise<any>>()
+  const resolveIdentity = (name: string, type: NodeType) => {
+    const k = `${type}:${name.toLowerCase()}`
+    if (!identityCache.has(k)) identityCache.set(k, identifyEntity(name, type).catch(() => null))
+    return identityCache.get(k)!
+  }
 
   await prisma.graphRun.update({
     where: { id: runId },
@@ -71,18 +87,44 @@ export async function runDeepSearch(runId: string): Promise<void> {
         throw new Error('未能从该网址抓取/抽取到任何实体，请检查链接是否可访问、是否为列表/内容页')
       }
       startDepth = 1
+    } else if (nodeAnchored) {
+      const names = seedNodesInput.map((s) => s.name).slice(0, 5).join('、')
+      await log(`定点深挖：从 ${seedNodesInput.length} 个已选节点出发（${names}${seedNodesInput.length > 5 ? ' 等' : ''}）`, 'step')
+      await log(`参数：最大深度 ${config.maxDepth} · 每层扩展 ${config.maxPerLevel} · 单点最多 ${config.maxNeighborsPerNode} 邻居 · 节点上限 ${config.globalNodeCap}`, 'info')
+      await log(`取证模式：对每个起点按名字检索真实资料(来源=${provider})，只归档有出处依据的关系(核实后归档)`, 'info')
+      for (const s of seedNodesInput) {
+        const identity = s.identity || await resolveIdentity(s.name, s.type)
+        const k = canonicalKey(s.type, identity?.label || s.name, identity)
+        if (nodes.has(k)) continue
+        nodes.set(k, {
+          key: k,
+          name: identity?.label || s.name,
+          type: s.type,
+          depth: 0,
+          relevanceScore: 1,
+          discoveryCount: 1,
+          identity,
+          degree: 0,
+          pagerank: 0,
+          importance: 1,
+        })
+      }
+      await persistNodes(runId, Array.from(nodes.values()))
     } else {
       await log(`开始搜索：「${run.seedName}」（${run.seedType}）`, 'step')
       await log(`参数：最大深度 ${config.maxDepth} · 每层扩展 ${config.maxPerLevel} · 单点最多 ${config.maxNeighborsPerNode} 邻居 · 节点上限 ${config.globalNodeCap}`, 'info')
       await log(`取证模式：先检索真实资料(来源=${provider})，再从真实正文抽取关系，每条关系都带可核验出处`, 'info')
-      const seedKey = canonicalKey(run.seedType, run.seedName)
+      const seedIdentity = await resolveIdentity(run.seedName, run.seedType as NodeType)
+      const seedName = seedIdentity?.label || run.seedName
+      const seedKey = canonicalKey(run.seedType, seedName, seedIdentity)
       nodes.set(seedKey, {
         key: seedKey,
-        name: run.seedName,
+        name: seedName,
         type: run.seedType as any,
         depth: 0,
         relevanceScore: 1,
         discoveryCount: 1,
+        identity: seedIdentity,
         degree: 0,
         pagerank: 0,
         importance: 1,
@@ -96,7 +138,7 @@ export async function runDeepSearch(runId: string): Promise<void> {
 
     // 预估深挖扩展次数(用于进度)
     let expandTarget = 0
-    for (let d = startDepth; d < config.maxDepth; d++) expandTarget += d === 0 ? 1 : config.maxPerLevel
+    for (let d = startDepth; d < config.maxDepth; d++) expandTarget += d === 0 ? level0Expand : config.maxPerLevel
     expandTarget = Math.max(1, expandTarget)
     let expandsDone = 0
 
@@ -105,7 +147,7 @@ export async function runDeepSearch(runId: string): Promise<void> {
       const levelNodes = Array.from(nodes.values())
         .filter((n) => n.depth === depth)
         .sort((a, b) => b.relevanceScore - a.relevanceScore)
-        .slice(0, depth === 0 ? 1 : config.maxPerLevel)
+        .slice(0, depth === 0 ? level0Expand : config.maxPerLevel)
 
       await log(`▶ 进入第 ${depth + 1} 层，准备扩展 ${levelNodes.length} 个节点`, 'step')
 
@@ -136,6 +178,11 @@ export async function runDeepSearch(runId: string): Promise<void> {
         }
         expandsDone++
 
+        if (await isStopped(runId)) {
+          await log('⏹ 已手动停止', 'warn')
+          return
+        }
+
         if (!expansion.docCount) {
           await log(`✗ 未找到「${node.name}」的真实资料，已跳过该节点(不编造)`, 'warn')
           continue
@@ -159,7 +206,9 @@ export async function runDeepSearch(runId: string): Promise<void> {
         let dupCount = 0
 
         for (const { nb, v } of verified) {
-          const nbKey = canonicalKey(nb.type, nb.name)
+          const nbIdentity = await resolveIdentity(nb.name, nb.type)
+          const nbName = nbIdentity?.label || nb.name
+          const nbKey = canonicalKey(nb.type, nbName, nbIdentity)
           if (nbKey === node.key) continue
 
           const existing = nodes.get(nbKey)
@@ -173,7 +222,7 @@ export async function runDeepSearch(runId: string): Promise<void> {
           } else if (nodes.size < config.globalNodeCap) {
             const newNode: GraphNodeData = {
               key: nbKey,
-              name: nb.name,
+              name: nbName,
               type: nb.type,
               depth: node.depth + 1,
               relevanceScore: incomingRelevance,
@@ -182,13 +231,14 @@ export async function runDeepSearch(runId: string): Promise<void> {
               year: nb.year,
               evidence: nb.evidence,
               sourceUrl: nb.sourceUrl ?? null,
+              identity: nbIdentity,
               degree: 0,
               pagerank: 0,
               importance: 0,
             }
             nodes.set(nbKey, newNode)
             touchedNodes.push(newNode)
-            newNames.push(nb.name)
+            newNames.push(nbName)
           } else {
             continue // 达到全局上限
           }
@@ -276,6 +326,34 @@ export async function runDeepSearch(runId: string): Promise<void> {
       },
     })
   }
+}
+
+/**
+ * 解析定点深挖的种子节点列表(来自已选中的现有图谱节点)。
+ * 返回去重后的 {name, type}[]，type 非法则丢弃。
+ */
+export function parseSeedNodes(run: { seedNodes?: string | null }): { name: string; type: NodeType; identity?: EntityIdentity | null }[] {
+  if (!run.seedNodes) return []
+  let arr: any
+  try {
+    arr = JSON.parse(run.seedNodes)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(arr)) return []
+  const out: { name: string; type: NodeType; identity?: EntityIdentity | null }[] = []
+  const seen = new Set<string>()
+  for (const item of arr) {
+    const name = String(item?.name || '').trim()
+    const type = String(item?.type || '').toLowerCase().trim()
+    if (!name || !(NODE_TYPES as string[]).includes(type)) continue
+    const k = canonicalKey(type, name)
+    if (seen.has(k)) continue
+    seen.add(k)
+    const identity = item?.identity && typeof item.identity === 'object' ? item.identity as EntityIdentity : null
+    out.push({ name, type: type as NodeType, identity })
+  }
+  return out
 }
 
 /**
@@ -541,7 +619,13 @@ async function persistNodes(runId: string, list: GraphNodeData[]): Promise<void>
       degree: n.degree,
       discoveryCount: n.discoveryCount,
       parentKey: n.parentKey ?? null,
-      data: JSON.stringify({ year: n.year ?? null, evidence: n.evidence ?? null, sourceUrl: n.sourceUrl ?? null }),
+      data: JSON.stringify({
+        year: n.year ?? null,
+        evidence: n.evidence ?? null,
+        sourceUrl: n.sourceUrl ?? null,
+        wikidataId: n.identity?.wikidataId ?? null,
+        identity: n.identity ?? null,
+      }),
     }
     await prisma.graphNode.upsert({
       where: { runId_key: { runId, key: n.key } },

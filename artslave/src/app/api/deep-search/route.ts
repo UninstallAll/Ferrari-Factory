@@ -74,6 +74,43 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, runId: run.id })
     }
 
+    // 定点深挖：从用户选中的若干现有节点出发，按名字检索真实资料继续向下深搜
+    const seedNodes = Array.isArray(body.seedNodes)
+      ? body.seedNodes
+          .map((n: any) => ({
+            name: String(n?.name || '').trim(),
+            type: String(n?.type || '').toLowerCase().trim(),
+            identity: n?.identity && typeof n.identity === 'object' ? n.identity : null,
+          }))
+          .filter((n: { name: string; type: string }) => n.name && (NODE_TYPES as string[]).includes(n.type))
+      : []
+    if (seedNodes.length > 0) {
+      const seen = new Set<string>()
+      const uniq = seedNodes.filter((n: { name: string; type: string; identity?: any }) => {
+        const wd = n.identity?.wikidataId ? `:${String(n.identity.wikidataId).toLowerCase()}` : ''
+        const k = `${n.type}:${n.name.toLowerCase()}${wd}`
+        if (seen.has(k)) return false
+        seen.add(k)
+        return true
+      })
+      const label =
+        `定点深挖：` +
+        uniq.slice(0, 3).map((n: { name: string }) => n.name).join('、') +
+        (uniq.length > 3 ? ` 等 ${uniq.length} 点` : '')
+      const run = await prisma.graphRun.create({
+        data: {
+          seedName: label,
+          seedType: uniq[0].type,
+          seedNodes: JSON.stringify(uniq),
+          maxDepth,
+          maxPerLevel,
+          status: 'pending',
+        },
+      })
+      runDeepSearch(run.id).catch((err) => console.error('runDeepSearch error:', err))
+      return NextResponse.json({ success: true, runId: run.id })
+    }
+
     const seedName = String(body.seedName || '').trim()
     const seedType = String(body.seedType || 'artist').trim()
 
