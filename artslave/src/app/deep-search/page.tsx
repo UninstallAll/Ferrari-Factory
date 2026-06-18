@@ -5,7 +5,7 @@ import ReactFlow, { Background, Controls, MiniMap, Node, Edge, MarkerType, Handl
 import 'reactflow/dist/style.css'
 import { forceSimulation, forceManyBody, forceLink, forceCollide, forceX, forceY, type Simulation } from 'd3-force'
 import { Search, Play, Square, Loader2, Type, Link2, Upload, FileText, ImageIcon, X, Sparkles, History, Trash2, RefreshCw, Filter,
-  Palette, Building2, UserCheck, Waves, MapPin, GraduationCap, Newspaper, Frame, Circle,
+  Palette, Building2, UserCheck, Waves, MapPin, GraduationCap, Newspaper, Frame, Circle, Film,
   Wand2, ChevronDown, Target, Network, LayoutGrid, GitBranch, Grid3x3, Atom, Maximize2, Zap, Pin, type LucideIcon } from 'lucide-react'
 import AppHeader from '@/components/AppHeader'
 import { useLocale } from '@/contexts/LocaleContext'
@@ -78,10 +78,11 @@ const TYPE_COLORS: Record<string, string> = {
   scholar: '#db2777',
   paper: '#ca8a04',
   venue: '#4f46e5',
+  work: '#0d9488',
 }
 const TYPE_LABELS: Record<string, string> = {
   artist: '艺术家', exhibition: '展览', institution: '机构', curator: '策展人',
-  movement: '流派', location: '地点', scholar: '学者', paper: '论文', venue: '会议/期刊',
+  movement: '流派', location: '地点', scholar: '学者', paper: '论文', venue: '会议/期刊', work: '作品',
 }
 
 // 每个数据类别一个“地图标记”图标(图谱节点 + 图例共用)
@@ -95,6 +96,7 @@ const TYPE_ICONS: Record<string, LucideIcon> = {
   scholar: GraduationCap,
   paper: FileText,
   venue: Newspaper,
+  work: Film,
 }
 
 const NODE_TYPES = Object.keys(TYPE_COLORS)
@@ -293,6 +295,37 @@ const EntityNodeFast = memo(function EntityNodeFast({ data }: NodeProps<EntityNo
 
 const nodeTypesNormal: NodeTypes = { entity: EntityNode }
 const nodeTypesFast: NodeTypes = { entity: EntityNodeFast }
+
+// 浅比较节点 data：同步时若 data 未变则复用旧节点对象引用，命中 memo、避免全图重渲染
+function sameNodeData(a: EntityNodeData, b: EntityNodeData): boolean {
+  return (
+    a.name === b.name &&
+    a.type === b.type &&
+    a.baseSize === b.baseSize &&
+    a.sizeScale === b.sizeScale &&
+    a.color === b.color &&
+    a.selected === b.selected &&
+    a.matched === b.matched &&
+    a.related === b.related &&
+    a.hovered === b.hovered &&
+    a.dim === b.dim
+  )
+}
+
+// 浅比较边样式：同步时复用未变的边对象引用，避免选中时整组边重渲染
+function sameEdge(a: Edge, b: Edge): boolean {
+  return (
+    a.source === b.source &&
+    a.target === b.target &&
+    a.label === b.label &&
+    a.animated === b.animated &&
+    a.zIndex === b.zIndex &&
+    a.style?.strokeWidth === b.style?.strokeWidth &&
+    a.style?.stroke === b.style?.stroke &&
+    a.style?.opacity === b.style?.opacity &&
+    !!a.markerEnd === !!b.markerEnd
+  )
+}
 
 // 同心圆布局：按 depth 分层
 function layout(nodes: ApiNode[]): Map<string, { x: number; y: number }> {
@@ -531,6 +564,24 @@ function readFile(file: File): Promise<{ dataUrl: string; text: string }> {
   })
 }
 
+type FitViewOpts = { duration?: number; padding?: number; nodes?: { id: string }[] }
+
+/** ReactFlow fitView 返回 Promise，动画被中断时会 reject Event，需吞掉以免触发 Next 全局错误 */
+function safeFitView(
+  instance: { fitView: (opts?: FitViewOpts) => void | Promise<unknown> } | null | undefined,
+  opts?: FitViewOpts
+) {
+  if (!instance) return
+  try {
+    const result = instance.fitView(opts)
+    if (result && typeof (result as Promise<unknown>).catch === 'function') {
+      ;(result as Promise<unknown>).catch(() => {})
+    }
+  } catch {
+    // 节点尚未测量或视口切换中，忽略
+  }
+}
+
 export default function DeepSearchPage() {
   const { t, locale } = useLocale()
   const [seedType, setSeedType] = useState('artist')
@@ -606,7 +657,7 @@ export default function DeepSearchPage() {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('force')
   const [showLayoutMenu, setShowLayoutMenu] = useState(false)
   const rfInstanceRef = useRef<{
-    fitView: (opts?: { duration?: number; padding?: number; nodes?: { id: string }[] }) => void
+    fitView: (opts?: FitViewOpts) => void | Promise<unknown>
     getViewport?: () => { zoom: number; x: number; y: number }
   } | null>(null)
   const arrangeSigRef = useRef<string>('')
@@ -836,24 +887,28 @@ export default function DeepSearchPage() {
       setDetailPinned(false)
       setLogs([])
       setConsoleOpen(true)
-      const res = await fetch('/api/deep-search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seedUrls: urls, crawlPageMode, crawlPages, maxDepth, maxPerLevel }),
-      })
-      const data = await res.json()
-      if (!data.success) {
-        setResolveError('启动失败: ' + data.error)
-        return
+      try {
+        const res = await fetch('/api/deep-search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ seedUrls: urls, crawlPageMode, crawlPages, maxDepth, maxPerLevel }),
+        })
+        const data = await res.json()
+        if (!data.success) {
+          setResolveError('启动失败: ' + data.error)
+          return
+        }
+        const label = urls.length === 1
+          ? (() => { try { return new URL(urls[0]).hostname } catch { return urls[0] } })()
+          : `${urls.length} 个链接`
+        setRunId(data.runId)
+        setRun({ id: data.runId, seedName: label, seedType: 'institution', status: 'pending', progress: 0, message: '启动中…', nodeCount: 0, edgeCount: 0 })
+        fetchHistory()
+        poll(data.runId)
+        pollRef.current = setInterval(() => poll(data.runId), 2500)
+      } catch (e) {
+        setResolveError('启动失败: ' + (e instanceof Error ? e.message : String(e)))
       }
-      const label = urls.length === 1
-        ? (() => { try { return new URL(urls[0]).hostname } catch { return urls[0] } })()
-        : `${urls.length} 个链接`
-      setRunId(data.runId)
-      setRun({ id: data.runId, seedName: label, seedType: 'institution', status: 'pending', progress: 0, message: '启动中…', nodeCount: 0, edgeCount: 0 })
-      fetchHistory()
-      poll(data.runId)
-      pollRef.current = setInterval(() => poll(data.runId), 2500)
       return
     }
 
@@ -874,21 +929,25 @@ export default function DeepSearchPage() {
     setLogs([])
     setConsoleOpen(true)
     const finalType = seedType || seed.seedType
-    const res = await fetch('/api/deep-search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seedName: seed.seedName, seedType: finalType, maxDepth, maxPerLevel }),
-    })
-    const data = await res.json()
-    if (!data.success) {
-      setResolveError('启动失败: ' + data.error)
-      return
+    try {
+      const res = await fetch('/api/deep-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seedName: seed.seedName, seedType: finalType, maxDepth, maxPerLevel }),
+      })
+      const data = await res.json()
+      if (!data.success) {
+        setResolveError('启动失败: ' + data.error)
+        return
+      }
+      setRunId(data.runId)
+      setRun({ id: data.runId, seedName: seed.seedName, seedType: finalType, status: 'pending', progress: 0, message: '启动中…', nodeCount: 0, edgeCount: 0 })
+      fetchHistory()
+      poll(data.runId)
+      pollRef.current = setInterval(() => poll(data.runId), 2500)
+    } catch (e) {
+      setResolveError('启动失败: ' + (e instanceof Error ? e.message : String(e)))
     }
-    setRunId(data.runId)
-    setRun({ id: data.runId, seedName: seed.seedName, seedType: finalType, status: 'pending', progress: 0, message: '启动中…', nodeCount: 0, edgeCount: 0 })
-    fetchHistory()
-    poll(data.runId)
-    pollRef.current = setInterval(() => poll(data.runId), 2500)
   }
 
   // 是否已在深挖队列中
@@ -968,12 +1027,16 @@ export default function DeepSearchPage() {
 
   const stop = async () => {
     if (!runId) return
-    await fetch(`/api/deep-search/${runId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'stop' }),
-    })
-    poll(runId)
+    try {
+      await fetch(`/api/deep-search/${runId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'stop' }),
+      })
+      poll(runId)
+    } catch (e) {
+      console.error(e)
+    }
   }
 
   useEffect(() => {
@@ -1040,7 +1103,7 @@ export default function DeepSearchPage() {
   useEffect(() => {
     if (!sidebarHoveredKey) return
     const timer = setTimeout(() => {
-      rfInstanceRef.current?.fitView({ nodes: [{ id: sidebarHoveredKey }], duration: 350, padding: 0.4 })
+      safeFitView(rfInstanceRef.current, { nodes: [{ id: sidebarHoveredKey }], duration: 350, padding: 0.4 })
     }, 400)
     return () => clearTimeout(timer)
   }, [sidebarHoveredKey])
@@ -1217,11 +1280,18 @@ export default function DeepSearchPage() {
     setNodeSizeScale(defaultNodeSizeScale)
   }, [defaultNodeSizeScale, filteredNodes.length])
 
+  // 布局只在「结构 / 布局模式 / 尺寸」变化时计算；hover/选中不再触发整图布局重算
+  const layoutPos = useMemo(
+    () =>
+      livePhysics
+        ? layout(filteredNodes)
+        : computeLayout(layoutMode, filteredNodes, filteredEdges, nodeSizeScale),
+    [filteredNodes, filteredEdges, layoutMode, nodeSizeScale, livePhysics]
+  )
+
   const flowNodes: Node[] = useMemo(() => {
     // 布局始终基于完整 filteredNodes/filteredEdges（避免 renderNodes 变化导致位置突变）
-    const pos = livePhysics
-      ? layout(filteredNodes)
-      : computeLayout(layoutMode, filteredNodes, filteredEdges, nodeSizeScale)
+    const pos = layoutPos
     const searching = matchedKeys != null
     const focusing = relatedKeys != null
     return renderNodes.map((n) => {
@@ -1248,7 +1318,7 @@ export default function DeepSearchPage() {
         },
       }
     })
-  }, [renderNodes, filteredNodes, filteredEdges, selected, relatedKeys, matchedKeys, sidebarHoveredKey, nodeSizeScale, layoutMode, livePhysics])
+  }, [renderNodes, layoutPos, selected, relatedKeys, matchedKeys, sidebarHoveredKey, nodeSizeScale])
 
   // 简洁优雅的连线：默认极细浅灰、无箭头无文字；只有选中节点的相连边才加粗高亮 + 显示关系标签
   const flowEdges: Edge[] = useMemo(
@@ -1284,16 +1354,35 @@ export default function DeepSearchPage() {
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState([])
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState([])
 
-  // 样式/高亮变化时：重建节点对象但保留当前位置(物理模拟或拖动得到的位置)
+  // 样式/高亮变化时：只为 data 真正变化的节点造新对象，其余保持引用不变(命中 memo)，
+  // 从而把“选中/悬停就全图重渲染”降为“只重渲染少数受影响节点”。位置始终保留(物理/拖动)。
   useEffect(() => {
     setRfNodes((prev) => {
-      const prevPos = new Map(prev.map((n) => [n.id, n.position]))
-      return flowNodes.map((n) => ({ ...n, position: prevPos.get(n.id) || n.position }))
+      const prevById = new Map(prev.map((n) => [n.id, n]))
+      let changed = prev.length !== flowNodes.length
+      const next = flowNodes.map((n) => {
+        const old = prevById.get(n.id)
+        if (!old) { changed = true; return n }
+        if (sameNodeData(old.data as EntityNodeData, n.data as EntityNodeData)) return old // data 未变 → 整体复用(含位置)
+        changed = true
+        return { ...n, position: old.position } // data 变了 → 新对象但保留当前位置
+      })
+      return changed ? next : prev // 整体无变化则连数组引用都不换，彻底跳过
     })
   }, [flowNodes, setRfNodes])
 
   useEffect(() => {
-    setRfEdges(flowEdges)
+    setRfEdges((prev) => {
+      const prevById = new Map(prev.map((e) => [e.id, e]))
+      let changed = prev.length !== flowEdges.length
+      const next = flowEdges.map((e) => {
+        const old = prevById.get(e.id)
+        if (old && sameEdge(old, e)) return old // 样式未变 → 复用旧对象，跳过重渲染
+        changed = true
+        return e
+      })
+      return changed ? next : prev
+    })
   }, [flowEdges, setRfEdges])
 
   // 始终记录屏幕上每个节点的当前坐标(供物理模拟续接 / 切换时无缝衔接)
@@ -1370,7 +1459,7 @@ export default function DeepSearchPage() {
     })
     // 稳定后自动居中(留白适中，避免缩放过小导致节点/文字显得遥远)
     sim.on('end', () => {
-      rfInstanceRef.current?.fitView({ duration: 400, padding: 0.12 })
+      safeFitView(rfInstanceRef.current, { duration: 400, padding: 0.12 })
     })
     simRef.current = sim
 
@@ -1393,7 +1482,7 @@ export default function DeepSearchPage() {
     arrangeSigRef.current = sig
     const pos = computeLayout(layoutMode, filteredNodes, filteredEdges, nodeSizeScale)
     setRfNodes((prev) => prev.map((n) => ({ ...n, position: pos.get(n.id) || n.position })))
-    setTimeout(() => rfInstanceRef.current?.fitView({ duration: 500, padding: 0.12 }), 60)
+    setTimeout(() => safeFitView(rfInstanceRef.current, { duration: 500, padding: 0.12 }), 60)
   }, [onlyMatched, livePhysics, layoutMode, filteredNodes, filteredEdges, nodeSizeScale, setRfNodes])
 
   const onNodeClick = useCallback(
@@ -1452,7 +1541,7 @@ export default function DeepSearchPage() {
       simRef.current?.stop()
       const pos = computeLayout(mode, filteredNodes, filteredEdges, nodeSizeScale)
       setRfNodes((prev) => prev.map((n) => ({ ...n, position: pos.get(n.id) || n.position })))
-      setTimeout(() => rfInstanceRef.current?.fitView({ duration: 600, padding: 0.12 }), 60)
+      setTimeout(() => safeFitView(rfInstanceRef.current, { duration: 600, padding: 0.12 }), 60)
     },
     [filteredNodes, filteredEdges, nodeSizeScale, setRfNodes]
   )
@@ -1841,7 +1930,7 @@ export default function DeepSearchPage() {
                   const n = item.node
                   setSelected(n)
                   setRankDetailOpen(true)
-                  setTimeout(() => rfInstanceRef.current?.fitView({ nodes: [{ id: n.key }], duration: 400, padding: 0.35 }), 60)
+                  setTimeout(() => safeFitView(rfInstanceRef.current, { nodes: [{ id: n.key }], duration: 400, padding: 0.35 }), 60)
                 } else if (e.key === 'Escape') {
                   setShowSuggestions(false)
                   setActiveSuggestionIdx(-1)
@@ -1895,7 +1984,7 @@ export default function DeepSearchPage() {
                         const n = item.node
                         setSelected(n)
                         setRankDetailOpen(true)
-                        setTimeout(() => rfInstanceRef.current?.fitView({ nodes: [{ id: n.key }], duration: 400, padding: 0.35 }), 60)
+                        setTimeout(() => safeFitView(rfInstanceRef.current, { nodes: [{ id: n.key }], duration: 400, padding: 0.35 }), 60)
                       }}
                       className={`w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm border-b border-slate-50 last:border-0 transition-colors ${
                         isActive ? 'bg-slate-100' : 'hover:bg-slate-50'
@@ -2085,7 +2174,15 @@ export default function DeepSearchPage() {
               {/* 关系类型 */}
               {relationStats.size > 0 && (
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">关系类型</label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-medium text-slate-600">关系类型</label>
+                    {relationStats.size > 1 && (
+                      <div className="flex gap-2 text-[11px]">
+                        <button onClick={() => setHiddenRelations(new Set())} className="text-blue-600 hover:underline">全选</button>
+                        <button onClick={() => setHiddenRelations(new Set(Array.from(relationStats.keys())))} className="text-slate-400 hover:underline">全不选</button>
+                      </div>
+                    )}
+                  </div>
                   <div className="space-y-1">
                     {Array.from(relationStats.keys()).map((r) => {
                       const on = !hiddenRelations.has(r)
@@ -2202,10 +2299,13 @@ export default function DeepSearchPage() {
             onPaneClick={() => { setSelected(null); setRankDetailOpen(false); setDetailPinned(false); setShowLayoutMenu(false) }}
             onNodeMouseEnter={(_, node) => setGraphHoveredKey(node.id)}
             onNodeMouseLeave={() => setGraphHoveredKey(null)}
-            onInit={(inst) => { rfInstanceRef.current = inst }}
-            fitView
+            onInit={(inst) => {
+              rfInstanceRef.current = inst
+              safeFitView(inst)
+            }}
             minZoom={0.15}
             maxZoom={2.5}
+            onlyRenderVisibleElements
           >
             <Background color="#e2e8f0" gap={26} size={1.5} />
             <Controls />
@@ -2417,7 +2517,7 @@ export default function DeepSearchPage() {
                         key={n.key}
                         ref={(el) => { if (el) rankItemRefs.current.set(n.key, el); else rankItemRefs.current.delete(n.key) }}
                         onClick={() => { setSelected(n); setRankDetailOpen(true) }}
-                        onDoubleClick={() => rfInstanceRef.current?.fitView({ nodes: [{ id: n.key }], duration: 400, padding: 0.35 })}
+                        onDoubleClick={() => safeFitView(rfInstanceRef.current, { nodes: [{ id: n.key }], duration: 400, padding: 0.35 })}
                         onMouseEnter={() => setSidebarHoveredKey(n.key)}
                         onMouseLeave={() => setSidebarHoveredKey(null)}
                         className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${

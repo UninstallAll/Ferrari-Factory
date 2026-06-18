@@ -14,6 +14,11 @@ import {
   buildSkeleton,
   type ExtractionRecipe,
 } from '@/lib/graphSearch/recipe'
+import {
+  registrableDomain,
+  sameSite,
+  filterCandidates,
+} from '@/lib/graphSearch/navigator'
 import { canonicalKey } from '@/lib/graphSearch/types'
 import { compareEntries } from '@/lib/graphSearch/identity'
 import { parseSeedNodes } from '@/lib/graphSearch/engine'
@@ -159,5 +164,54 @@ describe('identity disambiguation — 离线去重规则', () => {
     })
     expect(nodes).toHaveLength(1)
     expect(nodes[0].identity?.wikidataId).toBe('Q5593')
+  })
+})
+
+describe('navigator.ts — 同站判定与候选收敛', () => {
+  it('registrableDomain 取 eTLD+1(含子域与多段 TLD)', () => {
+    expect(registrableDomain('programme.annecyfestival.com')).toBe('annecyfestival.com')
+    expect(registrableDomain('www.annecyfestival.com')).toBe('annecyfestival.com')
+    expect(registrableDomain('shop.gallery.co.uk')).toBe('gallery.co.uk')
+  })
+
+  it('sameSite 放行同主域子域、拦截跨主域', () => {
+    expect(sameSite('https://www.annecyfestival.com/en', 'https://programme.annecyfestival.com/x')).toBe(true)
+    expect(sameSite('https://www.annecyfestival.com/en', 'https://facebook.com/annecy')).toBe(false)
+  })
+
+  it('filterCandidates 去重/去 chrome/限同站/去已访问', () => {
+    const visited = new Set<string>(['https://www.annecyfestival.com/en/visited'])
+    const cands = [
+      { text: 'Feature Films', url: 'https://www.annecyfestival.com/en/the-festival/official-selection/feature-films' },
+      { text: 'Feature Films dup', url: 'https://www.annecyfestival.com/en/the-festival/official-selection/feature-films/' }, // 尾斜杠重复
+      { text: 'Login', url: 'https://www.annecyfestival.com/en/account/login' }, // chrome
+      { text: 'Facebook', url: 'https://facebook.com/annecy' }, // 跨站
+      { text: 'Programme', url: 'https://programme.annecyfestival.com/' }, // 子域放行
+      { text: 'Visited', url: 'https://www.annecyfestival.com/en/visited' }, // 已访问
+    ]
+    const out = filterCandidates(cands, 'https://www.annecyfestival.com/en', {
+      siteHost: 'annecyfestival.com',
+      visited,
+    })
+    const urls = out.map((c) => c.url)
+    expect(urls).toContain('https://www.annecyfestival.com/en/the-festival/official-selection/feature-films')
+    expect(urls).toContain('https://programme.annecyfestival.com/')
+    expect(urls.some((u) => u.includes('/login'))).toBe(false)
+    expect(urls.some((u) => u.includes('facebook'))).toBe(false)
+    expect(urls.some((u) => u.includes('/visited'))).toBe(false)
+    // 尾斜杠重复被归并
+    expect(urls.filter((u) => u.includes('feature-films')).length).toBe(1)
+  })
+})
+
+describe('recipe.ts — work(作品) 记录映射', () => {
+  it('recordsToGraph 把记录映射为 type=work 节点', () => {
+    const records = [
+      { name: 'Spider-Man: Beyond', link: 'https://x.com/f/1', role: 'Feature Film' },
+      { name: 'Flow', link: 'https://x.com/f/2' },
+    ]
+    const { nodes } = recordsToGraph(records, 'work', 'https://x.com/list')
+    const works = nodes.filter((n) => n.type === 'work')
+    expect(works.map((n) => n.name)).toEqual(expect.arrayContaining(['Spider-Man: Beyond', 'Flow']))
   })
 })

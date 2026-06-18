@@ -371,6 +371,8 @@ model GraphRun {
   seedNodes     String? // 定点深挖模式：从已有节点出发的种子列表 [{name,type}] (JSON 数组)
   crawlPageMode String? @default("auto") // auto | fixed — 翻页策略
   crawlPages    Int? // fixed: 目标页数; auto: 安全上限(解析到末页前最多抓多少页)
+  crawlGoal     String? // 目标驱动下钻：自然语言意图(如"2026 参展的所有动画影片与艺术家")，导航 LLM 据此择链
+  crawlBackend  String? @default("agentic") // agentic(自研智能下钻) | firecrawl(外部服务兜底)
   status      String    @default("pending") // pending|running|completed|failed|stopped
   maxDepth    Int       @default(2)
   maxPerLevel Int       @default(8)

@@ -13,6 +13,7 @@ const TYPE_HINTS: Record<NodeType, string[]> = {
   scholar: ['scholar', 'art historian', 'researcher', 'professor'],
   paper: ['paper', 'journal article', 'publication'],
   venue: ['journal', 'conference', 'venue'],
+  work: ['film', 'animated film', 'movie', 'artwork', 'painting', 'book', 'work'],
 }
 
 export interface WikidataCandidate extends EntityIdentity {

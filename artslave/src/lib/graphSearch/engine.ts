@@ -7,12 +7,14 @@
 import { prisma } from '@/lib/prisma'
 import { expandEntity } from './llmExpander'
 import { extractPageGraph } from './pageExtractor'
-import { crawlListing, type CrawlPageMode } from './crawler'
-import { getOrInferRecipe, saveRecipe, recordsToGraph } from './recipe'
+import { type CrawlPageMode, type CrawledPage } from './crawler'
+import { getOrInferRecipe, saveRecipe, recordsToGraph, type ExtractionRecipe } from './recipe'
+import { agenticCrawl } from './agenticCrawler'
+import { externalCrawl } from './externalCrawl'
 import type { FetchedPage } from './render'
 import { verifyNeighbor } from './verifier'
 import { computeImportance } from './importance'
-import { identifyEntity } from './identity'
+import { identifyEntity, compareEntries } from './identity'
 import {
   GraphNodeData,
   GraphEdgeData,
@@ -22,6 +24,7 @@ import {
   EntityIdentity,
   NODE_TYPES,
   canonicalKey,
+  canonicalKeyBase,
 } from './types'
 
 function undirectedEdgeId(a: string, b: string, type: string): string {
@@ -82,7 +85,7 @@ export async function runDeepSearch(runId: string): Promise<void> {
       const crawlUrls = parseCrawlUrls(run)
       await log(`开始爬取式搜索：${crawlUrls.length > 1 ? `${crawlUrls.length} 个链接` : crawlUrls[0]}`, 'step')
       await log(`流程：① 抓取网页(自动翻页) → ② 从真实正文批量抽取实体/关系 → ③ 对重点实体用真实资料(来源=${provider})继续深挖`, 'info')
-      await seedFromCrawl(runId, crawlUrls, run.crawlPageMode, run.crawlPages, nodes, edges, config, log)
+      await seedFromCrawl(runId, crawlUrls, run.crawlPageMode, run.crawlPages, run.crawlGoal, run.crawlBackend, nodes, edges, config, log)
       if (nodes.size === 0) {
         throw new Error('未能从该网址抓取/抽取到任何实体，请检查链接是否可访问、是否为列表/内容页')
       }
@@ -208,8 +211,23 @@ export async function runDeepSearch(runId: string): Promise<void> {
         for (const { nb, v } of verified) {
           const nbIdentity = await resolveIdentity(nb.name, nb.type)
           const nbName = nbIdentity?.label || nb.name
-          const nbKey = canonicalKey(nb.type, nbName, nbIdentity)
+          let nbKey = canonicalKey(nb.type, nbName, nbIdentity)
           if (nbKey === node.key) continue
+
+          // 词条比对：无精确 key 命中时，对同名(base slug 相同)的已有节点做身份比对，
+          // 判定为同一实体则合并(避免“同一个人因身份信息不全被拆成两个节点”的误拆)。
+          if (!nodes.has(nbKey)) {
+            const nbBase = canonicalKeyBase(nb.type, nbName)
+            for (const ex of nodes.values()) {
+              if (ex.key === nbKey || canonicalKeyBase(ex.type, ex.name) !== nbBase) continue
+              const verdict = compareEntries(nbIdentity, ex.identity)
+              if (verdict.sameIdentity) {
+                await log(`词条比对：「${nbName}」与已有「${ex.name}」判定为同一实体（${verdict.reasons.join('、')}），合并`, 'info')
+                nbKey = ex.key
+                break
+              }
+            }
+          }
 
           const existing = nodes.get(nbKey)
           const incomingRelevance = node.relevanceScore * nb.strength * 0.9
@@ -385,6 +403,8 @@ async function seedFromCrawl(
   seedUrls: string[],
   crawlPageMode: string | null,
   crawlPages: number | null,
+  goal: string | null,
+  backend: string | null,
   nodes: Map<string, GraphNodeData>,
   edges: Map<string, GraphEdgeData>,
   config: SearchConfig,
@@ -433,62 +453,61 @@ async function seedFromCrawl(
     return recipe
   }
 
-  if (seedUrls.length > 1) {
-    await log(`① 多链接爬取：共 ${seedUrls.length} 个起始站，翻页策略=${mode === 'auto' ? '自动解析末页' : `固定 ${maxPages} 页`}${jsHint}`, 'step')
-  } else if (mode === 'auto') {
-    await log(`① 自动翻页：解析分页/记录配方，确认末页后停止(安全上限 ${maxPages} 页)${jsHint}`, 'step')
+  if (goal) await log(`🎯 目标：${goal}`, 'step')
+
+  // 取页：按后端分派(firecrawl 兜底 → 无结果回退 agentic 智能下钻)
+  let pages: CrawledPage[] = []
+  let recipesToSave: ExtractionRecipe[] = []
+  if (backend === 'firecrawl') {
+    await log(`① 外部后端 Firecrawl 抓取：${seedUrls.length} 个起始链接`, 'step')
+    pages = await externalCrawl(seedUrls, goal, log)
+    if (!pages.length) await log('Firecrawl 无结果，回退到自研智能下钻…', 'warn')
   }
-
-  for (let si = 0; si < seedUrls.length; si++) {
-    const seedUrl = seedUrls[si]
-    if (await isStopped(runId)) return
-
-    if (seedUrls.length > 1) {
-      await log(`━━ 起始站 ${si + 1}/${seedUrls.length}：${seedUrl}`, 'step')
-    } else {
-      await log(`① 抓取网页：从 ${seedUrl} 起，最多 ${maxPages} 页${jsHint}`, 'step')
-    }
-
-    const { pages, recipe } = await crawlListing(seedUrl, {
-      maxPages,
-      mode,
+  if (!pages.length) {
+    const linkDepth = Number(process.env.CRAWL_LINK_DEPTH) || 3
+    const totalCap = Number(process.env.CRAWL_MAX_TOTAL_PAGES) || 60
+    await log(`① 智能下钻：从 ${seedUrls.length} 个起始链接按目标自主跟进链接(下钻深度≤${linkDepth}，页预算 ${totalCap})${jsHint}`, 'step')
+    const res = await agenticCrawl(seedUrls, {
+      goal,
       budget: renderBudget,
       getRecipe: resolveRecipe,
-      onPage: async (url, idx, total) => {
-        const prefix = seedUrls.length > 1 ? `[站${si + 1}] ` : ''
-        await log(`${prefix}抓取第 ${idx}/${total} 页：${url}`, 'llm')
+      perUrlPages: maxPages,
+      isStopped: () => isStopped(runId),
+      log,
+    })
+    pages = res.pages
+    recipesToSave = res.recipes
+  }
+
+  if (!pages.length) {
+    await log('✗ 未抓取到任何可用页面内容', 'error')
+    return
+  }
+  await log(`✓ 共抓到 ${pages.length} 页，开始抽取实体与关系…`, 'success')
+
+  let pageIdx = 0
+  for (const page of pages) {
+    pageIdx++
+    if (await isStopped(runId)) return
+
+    await prisma.graphRun.update({
+      where: { id: runId },
+      data: {
+        progress: Math.min(58, 5 + Math.round((pageIdx / pages.length) * 53)),
+        message: `解析第 ${pageIdx}/${pages.length} 页…(已发现 ${nodes.size} 节点)`,
       },
     })
 
-    if (!pages.length) {
-      await log(`✗ ${seedUrl} 未抓取到可用页面内容`, 'error')
-      continue
-    }
-    await log(`✓ ${seedUrl} 共抓到 ${pages.length} 页，开始抽取实体与关系…`, 'success')
-
-    let pageIdx = 0
-    for (const page of pages) {
-      pageIdx++
-      if (await isStopped(runId)) return
-
-      await prisma.graphRun.update({
-        where: { id: runId },
-        data: {
-          progress: Math.min(58, 5 + Math.round(((si + pageIdx / pages.length) / seedUrls.length) * 53)),
-          message: `解析 ${seedUrl} 第 ${pageIdx}/${pages.length} 页…(已发现 ${nodes.size} 节点)`,
-        },
-      })
-
-      // 三路合并：① 结构化直采(JSON-LD/microdata/OG)；② 配方记录(确定性, 零 LLM)；③ 非列表页才回退 LLM 全文抽取
-      const fromRecords = recordsToGraph(page.records, page.recordType, page.url)
-      let fromLlm: typeof fromRecords = { nodes: [], edges: [] }
-      if (!page.records.length) {
-        try {
-          fromLlm = await extractPageGraph(page.text, page.url, 22)
-        } catch (err) {
-          await log(`⚠ ${page.url} 正文抽取失败：${err instanceof Error ? err.message : String(err)}`, 'error')
-        }
+    // 三路合并：① 结构化直采(JSON-LD/microdata/OG)；② 配方记录(确定性, 零 LLM)；③ 非列表页才回退 LLM(目标驱动)
+    const fromRecords = recordsToGraph(page.records, page.recordType, page.url)
+    let fromLlm: typeof fromRecords = { nodes: [], edges: [] }
+    if (!page.records.length && page.text.trim().length > 50) {
+      try {
+        fromLlm = await extractPageGraph(page.text, page.url, 22, goal || undefined)
+      } catch (err) {
+        await log(`⚠ ${page.url} 正文抽取失败：${err instanceof Error ? err.message : String(err)}`, 'error')
       }
+    }
       const extraction = {
         nodes: [...page.structured.entities, ...fromRecords.nodes, ...fromLlm.nodes],
         edges: [...page.structured.relations, ...fromRecords.edges, ...fromLlm.edges],
@@ -573,13 +592,12 @@ async function seedFromCrawl(
       )
     }
 
-    // 落库配方(套用过程中若发生失配升级，needsJs 已更新 → 下次直接渲染)
-    if (recipe) {
-      try {
-        await saveRecipe(recipe)
-      } catch {
-        /* 落库失败不致命 */
-      }
+  // 落库本次推断/更新的配方(失配升级后 needsJs 已更新 → 下次直接渲染)
+  for (const r of recipesToSave) {
+    try {
+      await saveRecipe(r)
+    } catch {
+      /* 落库失败不致命 */
     }
   }
 

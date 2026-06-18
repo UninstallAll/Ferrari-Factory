@@ -56,6 +56,8 @@ export async function POST(request: NextRequest) {
       const crawlPages = crawlPageMode === 'auto'
         ? Math.min(Math.max(parseInt(body.crawlPages) || 50, 1), 50)
         : Math.min(Math.max(parseInt(body.crawlPages) || 4, 1), 20)
+      const crawlGoal = String(body.crawlGoal || '').trim().slice(0, 500) || null
+      const crawlBackend = body.crawlBackend === 'firecrawl' ? 'firecrawl' : 'agentic'
       const label = String(body.seedName || '').trim() || crawlRunLabel(seedUrls)
       const run = await prisma.graphRun.create({
         data: {
@@ -65,6 +67,8 @@ export async function POST(request: NextRequest) {
           seedUrls: JSON.stringify(seedUrls),
           crawlPageMode,
           crawlPages,
+          crawlGoal,
+          crawlBackend,
           maxDepth,
           maxPerLevel,
           status: 'pending',

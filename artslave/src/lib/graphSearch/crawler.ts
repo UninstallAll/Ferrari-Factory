@@ -20,6 +20,7 @@ export interface CrawledPage {
   structured: StructuredHarvest // JSON-LD/microdata/OG 直采结果
   records: StructuredRecord[] // 配方套用结果(非列表页为空)
   recordType: NodeType // 记录代表的实体类型
+  links: { text: string; url: string }[] // 页面内锚点(供智能下钻选链用)
 }
 
 export type CrawlPageMode = 'fixed' | 'auto'
@@ -187,6 +188,7 @@ function buildCrawledPage(page: FetchedPage, recipe: ExtractionRecipe | null): C
     structured: page.structured,
     records,
     recordType: recipe?.recordType || 'artist',
+    links: readable.links,
   }
 }
 

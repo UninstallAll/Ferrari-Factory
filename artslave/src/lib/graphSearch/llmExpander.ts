@@ -26,6 +26,7 @@ const TYPE_LABELS: Record<string, string> = {
   scholar: '学者',
   paper: '论文',
   venue: '会议/期刊',
+  work: '作品',
 }
 
 export function getClient(): OpenAI {

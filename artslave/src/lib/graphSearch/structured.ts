@@ -46,6 +46,20 @@ const SCHEMA_TYPE_MAP: Record<string, NodeType> = {
   creativeworkseries: 'venue',
   periodical: 'venue',
   publicationissue: 'venue',
+  // 作品类(影片/画作/出版物等) → work
+  movie: 'work',
+  film: 'work',
+  videoobject: 'work',
+  tvepisode: 'work',
+  episode: 'work',
+  visualartwork: 'work',
+  painting: 'work',
+  sculpture: 'work',
+  drawing: 'work',
+  photograph: 'work',
+  book: 'work',
+  musicrecording: 'work',
+  creativework: 'work',
 }
 
 function typeKeys(t: unknown): string[] {

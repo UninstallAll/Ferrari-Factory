@@ -10,6 +10,7 @@ export type NodeType =
   | 'scholar'
   | 'paper'
   | 'venue' // 会议/期刊
+  | 'work' // 作品(影片/画作/出版物等)
 
 export type RelationType =
   | 'participated_in'
@@ -24,7 +25,7 @@ export type RelationType =
   | 'published_in'
 
 export const NODE_TYPES: NodeType[] = [
-  'artist', 'exhibition', 'institution', 'curator', 'movement', 'location', 'scholar', 'paper', 'venue',
+  'artist', 'exhibition', 'institution', 'curator', 'movement', 'location', 'scholar', 'paper', 'venue', 'work',
 ]
 
 export const RELATION_TYPES: RelationType[] = [
