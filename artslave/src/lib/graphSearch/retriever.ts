@@ -147,6 +147,32 @@ async function retrieveBocha(query: string): Promise<RetrievedDoc[]> {
     .filter((d: RetrievedDoc) => d.url && d.text)
 }
 
+// ---------------- 免费联网搜索(无需 key)：Jina Search ----------------
+// s.jina.ai 直接返回若干网页的标题/正文/URL，免 key、即时可用，对维基覆盖不到的
+// 小众/当代实体(艺术家、驻留、资助)是关键补充。失败/超时则返回空(绝不编造)。
+async function retrieveJina(query: string): Promise<RetrievedDoc[]> {
+  try {
+    const res = await fetch(`https://s.jina.ai/${encodeURIComponent(query)}`, {
+      headers: { 'User-Agent': UA, Accept: 'application/json' },
+      signal: AbortSignal.timeout(10000),
+    })
+    if (!res.ok) return []
+    const j = await res.json()
+    const list = Array.isArray(j?.data) ? j.data : []
+    return list
+      .map((r: any) => ({
+        title: String(r.title || r.url || '').trim(),
+        url: String(r.url || '').trim(),
+        text: String(r.content || r.description || '').slice(0, 4000),
+        source: 'jina',
+      }))
+      .filter((d: RetrievedDoc) => d.url && d.text)
+      .slice(0, 4)
+  } catch {
+    return []
+  }
+}
+
 // ---------------- 统一入口 ----------------
 
 /**
@@ -163,6 +189,7 @@ export async function retrieveContext(query: string): Promise<RetrievedDoc[]> {
   if (useAll || provider === 'tavily') tasks.push(retrieveTavily(query))
   if (useAll || provider === 'serper') tasks.push(retrieveSerper(query))
   if (useAll || provider === 'bocha') tasks.push(retrieveBocha(query))
+  if (useAll || provider === 'jina') tasks.push(retrieveJina(query))
   // 未知 provider 兜底为维基百科
   if (!tasks.length) tasks.push(retrieveWikipedia(query, wikiOpts))
 
@@ -173,11 +200,14 @@ export async function retrieveContext(query: string): Promise<RetrievedDoc[]> {
   // 按 URL 去重 + 过滤过短文本
   const seen = new Set<string>()
   const out: RetrievedDoc[] = []
-  for (const d of docs) {
-    if (!d.url || seen.has(d.url)) continue
-    if (!d.text || d.text.trim().length < 80) continue
-    seen.add(d.url)
-    out.push(d)
+  const pushDocs = (arr: RetrievedDoc[]) => {
+    for (const d of arr) {
+      if (!d.url || seen.has(d.url)) continue
+      if (!d.text || d.text.trim().length < 80) continue
+      seen.add(d.url)
+      out.push(d)
+    }
   }
+  pushDocs(docs)
   return out.slice(0, 5)
 }
