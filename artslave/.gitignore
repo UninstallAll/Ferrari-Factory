@@ -36,6 +36,14 @@ yarn-error.log*
 # fake-llm 本地假 API 的运行时临时文件
 /.fake-llm/
 
+# 本地运行时产物（日志 / 数据库 / n8n 缓存）
+/logs/
+/prisma/dev.db
+/n8n/.cache/
+/n8n/database.sqlite
+/n8n/database.sqlite-shm
+/n8n/database.sqlite-wal
+
 # vercel
 .vercel
 
